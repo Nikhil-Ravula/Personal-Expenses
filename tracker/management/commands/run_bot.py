@@ -59,37 +59,14 @@ class Command(BaseCommand):
             ))
             return
 
+        from tracker.bot.runner import build_bot_application
+
         self.stdout.write(self.style.SUCCESS("[+] Initializing Smart Expense Tracker Telegram Bot..."))
-
-        application = ApplicationBuilder().token(token).build()
-
-        # Register command handlers
-        application.add_handler(CommandHandler("start", start_handler))
-        application.add_handler(CommandHandler("help", help_handler))
-        application.add_handler(CommandHandler("link", link_handler))
-        application.add_handler(CommandHandler("create", create_category_handler))
-        application.add_handler(CommandHandler("add", add_expense_handler))
-        application.add_handler(CommandHandler("show", show_expenses_handler))
-        application.add_handler(CommandHandler("delete", delete_expense_handler))
-        application.add_handler(CommandHandler("edit", edit_expense_handler))
-        application.add_handler(CommandHandler("total", total_handler))
-        application.add_handler(CommandHandler("pdf", pdf_handler))
-        application.add_handler(CommandHandler("budget", budget_handler))
-
-        # Callback queries for inline confirm/cancel
-        application.add_handler(CallbackQueryHandler(callback_query_handler))
-
-        # Plain text messages for session confirmation/budget input
-        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_message_handler))
-
-        # Start scheduler
-        scheduler = setup_scheduler(application)
-        self.stdout.write(self.style.SUCCESS("[+] In-process background scheduler started (Monthly budget prompts & reports)"))
+        application = build_bot_application(token)
 
         self.stdout.write(self.style.SUCCESS("[*] Bot is active and polling for updates. Press Ctrl+C to stop.\n"))
         try:
             application.run_polling()
         except KeyboardInterrupt:
             self.stdout.write(self.style.NOTICE("\nStopping bot..."))
-            scheduler.shutdown()
 

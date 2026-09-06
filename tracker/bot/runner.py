@@ -71,8 +71,21 @@ def build_bot_application(token: str, loop=None):
         callback_query_handler
     )
     from tracker.bot.scheduler import setup_scheduler
+    from telegram.request import HTTPXRequest
 
-    application = ApplicationBuilder().token(token).build()
+    # Automatic proxy detection for PythonAnywhere free tier
+    proxy_url = os.environ.get('https_proxy') or os.environ.get('http_proxy') or getattr(settings, 'TELEGRAM_PROXY_URL', None)
+    if not proxy_url and ('PYTHONANYWHERE_DOMAIN' in os.environ or os.path.exists('/etc/pythonanywhere')):
+        proxy_url = 'http://proxy.server:3128'
+
+    if proxy_url:
+        logger.info(f"[Telegram Bot] Using outbound proxy: {proxy_url}")
+        request = HTTPXRequest(proxy_url=proxy_url)
+        builder = ApplicationBuilder().token(token).request(request)
+    else:
+        builder = ApplicationBuilder().token(token)
+
+    application = builder.build()
 
     # Register command handlers
     application.add_handler(CommandHandler("start", start_handler))
