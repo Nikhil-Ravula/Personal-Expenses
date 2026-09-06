@@ -80,7 +80,7 @@ def build_bot_application(token: str, loop=None):
 
     if proxy_url:
         logger.info(f"[Telegram Bot] Using outbound proxy: {proxy_url}")
-        request = HTTPXRequest(proxy_url=proxy_url)
+        request = HTTPXRequest(proxy=proxy_url)
         builder = ApplicationBuilder().token(token).request(request)
     else:
         builder = ApplicationBuilder().token(token)
