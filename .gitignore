@@ -1,4 +1,5 @@
 # Environment
+.env.*
 .env
 .venv/
 env/
@@ -23,3 +24,5 @@ staticfiles/
 .vscode/
 *.swp
 *.swo
+
+*.md
