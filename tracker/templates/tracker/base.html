@@ -1,0 +1,181 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Smart Expense Tracker{% endblock %}</title>
+    <meta name="description" content="AI-powered Smart Expense Tracker with Telegram Bot integration and 3D visual analytics">
+
+    <!-- Pre-load theme script and global toggle function -->
+    <script>
+        function applyTheme(theme) {
+            document.documentElement.setAttribute('data-theme', theme);
+            document.documentElement.setAttribute('data-bs-theme', theme);
+            if (document.body) {
+                document.body.setAttribute('data-theme', theme);
+                document.body.setAttribute('data-bs-theme', theme);
+                document.documentElement.classList.remove('theme-dark', 'theme-light');
+                document.body.classList.remove('theme-dark', 'theme-light');
+                document.documentElement.classList.add(theme === 'light' ? 'theme-light' : 'theme-dark');
+                document.body.classList.add(theme === 'light' ? 'theme-light' : 'theme-dark');
+            }
+            try {
+                localStorage.setItem('smart_tracker_theme', theme);
+            } catch (e) {}
+        }
+
+        (function() {
+            try {
+                const savedTheme = localStorage.getItem('smart_tracker_theme') || 'dark';
+                document.documentElement.setAttribute('data-theme', savedTheme);
+                document.documentElement.setAttribute('data-bs-theme', savedTheme);
+                document.documentElement.classList.add(savedTheme === 'light' ? 'theme-light' : 'theme-dark');
+            } catch (e) {
+                document.documentElement.setAttribute('data-theme', 'dark');
+                document.documentElement.setAttribute('data-bs-theme', 'dark');
+                document.documentElement.classList.add('theme-dark');
+            }
+        })();
+
+        function toggleTheme() {
+            const current = document.documentElement.getAttribute('data-theme') || 'dark';
+            const next = current === 'dark' ? 'light' : 'dark';
+            applyTheme(next);
+
+            window.dispatchEvent(new CustomEvent('themeChanged', { detail: { theme: next } }));
+            if (typeof window.onThemeChanged === 'function') {
+                window.onThemeChanged(next);
+            }
+        }
+        window.applyTheme = applyTheme;
+        window.toggleTheme = toggleTheme;
+    </script>
+
+    <!-- Bootstrap 5 CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Bootstrap Icons -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Three.js (3D WebGL Engine) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+    <!-- Custom 3D Glassmorphic Styles with cache busting -->
+    <link rel="stylesheet" href="{% static 'css/styles.css' %}?v={% now 'U' %}">
+    {% block extra_head %}{% endblock %}
+</head>
+<body>
+    <!-- Global 3D WebGL Ambient Space Canvas -->
+    <canvas id="bg-3d-canvas" style="position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: -1; pointer-events: none; opacity: 0.8;"></canvas>
+
+    <!-- Navbar -->
+    <nav class="navbar-custom">
+        <div class="container d-flex flex-wrap justify-content-between align-items-center">
+            <!-- Brand -->
+            <a class="nav-brand" href="{% url 'dashboard' %}">
+                <i class="bi bi-wallet2 text-gradient-cyan"></i>
+                <span>Smart<span style="color: var(--accent-indigo);">Tracker</span></span>
+            </a>
+
+            <!-- Right Controls: Always Visible (Theme Toggle + Quick Actions + Hamburger) -->
+            <div class="d-flex align-items-center gap-2">
+                <!-- Theme Toggle Button (Sun / Moon) -->
+                <button type="button" id="theme-toggle-btn" class="btn-theme-toggle" onclick="toggleTheme()" title="Toggle Dark & Bright Mode" aria-label="Toggle Dark & Bright Mode">
+                    <i class="bi bi-moon-stars-fill theme-icon-dark"></i>
+                    <i class="bi bi-sun-fill theme-icon-light"></i>
+                </button>
+
+                {% if user.is_authenticated %}
+                <!-- Direct Telegram Redirect Button -->
+                <a href="{% url 'telegram_redirect' %}" target="_blank" rel="noopener noreferrer" class="btn-3d btn-cyan-3d py-1 px-2 px-md-3 d-inline-flex align-items-center gap-1" title="Direct Redirect to Telegram Bot">
+                    <i class="bi bi-telegram"></i> <span class="d-none d-sm-inline">Telegram</span>
+                </a>
+
+                <!-- Mobile Hamburger Toggler -->
+                <button class="navbar-toggler-custom d-lg-none" type="button" id="navbar-toggler-btn" aria-label="Toggle navigation">
+                    <i class="bi bi-list"></i>
+                </button>
+                {% else %}
+                <a href="{% url 'login' %}" class="btn-3d btn-secondary-3d py-1 px-3">Login</a>
+                <a href="{% url 'register' %}" class="btn-3d btn-primary-3d py-1 px-3 d-none d-sm-inline-flex">Get Started</a>
+                {% endif %}
+            </div>
+
+            {% if user.is_authenticated %}
+            <!-- Collapsible Navigation Menu (Desktop Inline & Mobile Drawer) -->
+            <div class="d-none d-lg-flex align-items-center gap-2 gap-md-3">
+                <a href="{% url 'dashboard' %}" class="nav-link-custom {% if request.resolver_match.url_name == 'dashboard' %}active{% endif %}">
+                    <i class="bi bi-grid-1x2-fill me-1"></i> Dashboard
+                </a>
+                <a href="{% url 'expenses' %}" class="nav-link-custom {% if request.resolver_match.url_name == 'expenses' %}active{% endif %}">
+                    <i class="bi bi-receipt me-1"></i> Expenses
+                </a>
+                <a href="{% url 'expense_add' %}" class="btn-3d btn-primary-3d py-1 px-3">
+                    <i class="bi bi-plus-lg"></i> Add
+                </a>
+                <a href="{% url 'profile' %}" class="nav-link-custom {% if request.resolver_match.url_name == 'profile' %}active{% endif %}">
+                    <i class="bi bi-person-badge me-1"></i> Profile
+                </a>
+                <a href="{% url 'logout' %}" class="nav-link-custom text-danger" title="Logout">
+                    <i class="bi bi-box-arrow-right"></i>
+                </a>
+            </div>
+
+            <!-- Mobile Collapsed Menu -->
+            <div class="nav-menu-collapse d-lg-none" id="navMenuCollapse">
+                <a href="{% url 'dashboard' %}" class="nav-link-custom {% if request.resolver_match.url_name == 'dashboard' %}active{% endif %}">
+                    <i class="bi bi-grid-1x2-fill me-2"></i> Dashboard
+                </a>
+                <a href="{% url 'expenses' %}" class="nav-link-custom {% if request.resolver_match.url_name == 'expenses' %}active{% endif %}">
+                    <i class="bi bi-receipt me-2"></i> Expenses
+                </a>
+                <a href="{% url 'expense_add' %}" class="nav-link-custom text-primary">
+                    <i class="bi bi-plus-circle-fill me-2"></i> Add New Expense
+                </a>
+                <a href="{% url 'profile' %}" class="nav-link-custom {% if request.resolver_match.url_name == 'profile' %}active{% endif %}">
+                    <i class="bi bi-person-badge me-2"></i> User Profile & Telegram Link
+                </a>
+                <a href="{% url 'logout' %}" class="nav-link-custom text-danger">
+                    <i class="bi bi-box-arrow-right me-2"></i> Log Out
+                </a>
+            </div>
+            {% endif %}
+        </div>
+    </nav>
+
+    <!-- Main Container -->
+    <main class="container py-3 py-md-4">
+        <!-- Messages -->
+        {% if messages %}
+        <div class="mb-4">
+            {% for message in messages %}
+            <div class="alert-glass alert-{{ message.tags|default:'info' }}">
+                <div class="d-flex align-items-center gap-2">
+                    {% if message.tags == 'success' %}
+                        <i class="bi bi-check-circle-fill text-success fs-5"></i>
+                    {% elif message.tags == 'warning' %}
+                        <i class="bi bi-exclamation-triangle-fill text-warning fs-5"></i>
+                    {% elif message.tags == 'error' or message.tags == 'danger' %}
+                        <i class="bi bi-x-circle-fill text-danger fs-5"></i>
+                    {% else %}
+                        <i class="bi bi-info-circle-fill text-info fs-5"></i>
+                    {% endif %}
+                    <span>{{ message }}</span>
+                </div>
+                <button type="button" class="btn-close ms-3" data-bs-dismiss="alert" aria-label="Close"></button>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        {% block content %}{% endblock %}
+    </main>
+
+    <!-- Bootstrap 5 JS Bundle -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- Custom JS with cache busting -->
+    <script src="{% static 'js/main.js' %}?v={% now 'U' %}"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

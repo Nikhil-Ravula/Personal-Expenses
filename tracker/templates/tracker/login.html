@@ -1,0 +1,54 @@
+{% extends 'tracker/base.html' %}
+
+{% block title %}Login • Smart Tracker{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center py-4">
+    <div class="col-12 col-sm-10 col-md-6 col-lg-5">
+        <div class="glass-panel p-4 p-md-5 card-3d">
+            <div class="text-center mb-4">
+                <div class="canvas-3d-container mx-auto mb-2" style="height: 100px; width: 100px;" title="3D Cyber Vault">
+                    <canvas id="auth-3d-canvas"></canvas>
+                </div>
+                <h1 class="h3">
+                    <span class="text-gradient">Welcome Back</span>
+                </h1>
+                <p class="text-secondary small">Log in to manage your finances with 3D WebGL analytics</p>
+            </div>
+
+            <form method="POST">
+                {% csrf_token %}
+                <div class="mb-3">
+                    <label class="form-label text-secondary small fw-medium">Username</label>
+                    <div class="input-group">
+                        <span class="input-group-text glass-input border-end-0"><i class="bi bi-person text-secondary"></i></span>
+                        <input type="text" name="username" class="form-control glass-input" placeholder="Enter your username" required autofocus>
+                    </div>
+                </div>
+
+                <div class="mb-4">
+                    <label class="form-label text-secondary small fw-medium">Password</label>
+                    <div class="input-group">
+                        <span class="input-group-text glass-input border-end-0"><i class="bi bi-key text-secondary"></i></span>
+                        <input type="password" name="password" class="form-control glass-input" placeholder="Enter your password" required>
+                    </div>
+                </div>
+
+                <button type="submit" class="btn-3d btn-primary-3d w-100 py-2 mb-3">
+                    Sign In
+                </button>
+
+                <div class="text-center text-secondary small">
+                    Don't have an account? <a href="{% url 'register' %}" class="fw-semibold">Create account</a>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    initAuth3DCube('auth-3d-canvas');
+</script>
+{% endblock %}

@@ -1,0 +1,153 @@
+{% extends 'tracker/base.html' %}
+
+{% block title %}User Profile & Telegram Link • Smart Tracker{% endblock %}
+
+{% block content %}
+<div class="row g-4">
+    <!-- User Info & Budget Overview -->
+    <div class="col-12 col-lg-5">
+        <div class="glass-panel p-4 mb-4 card-3d">
+            <div class="d-flex align-items-center gap-3 mb-4">
+                <div class="stat-icon indigo mb-0 fs-3">
+                    <i class="bi bi-person-fill"></i>
+                </div>
+                <div>
+                    <h1 class="h4 mb-0">{{ user.username }}</h1>
+                    <div class="text-secondary small">{{ user.email|default:"No email registered" }}</div>
+                </div>
+            </div>
+
+            <div class="p-3 rounded-3 mb-3" style="background: var(--bg-hover); border: 1px solid var(--border-subtle);">
+                <div class="row g-2">
+                    <div class="col-6">
+                        <span class="text-secondary small d-block">Account Status</span>
+                        <span class="badge-3d badge-emerald mt-1">Active</span>
+                    </div>
+                    <div class="col-6">
+                        <span class="text-secondary small d-block">Member Since</span>
+                        <span class="fw-medium small">{{ user.date_joined|date:"M Y" }}</span>
+                    </div>
+                </div>
+            </div>
+
+            <h2 class="h6 text-secondary text-uppercase tracking-wider mb-3">
+                <i class="bi bi-bullseye me-1 text-cyan"></i> Monthly Budget Setting
+            </h2>
+            <form method="POST" action="{% url 'set_budget' %}">
+                {% csrf_token %}
+                <div class="mb-3">
+                    <label class="form-label text-secondary small">Limit for {{ current_month_name }} (₹)</label>
+                    <div class="input-group">
+                        <span class="input-group-text glass-input border-end-0">₹</span>
+                        <input type="number" step="0.01" name="amount" class="form-control glass-input" placeholder="0.00" value="{{ current_budget.amount|default:'' }}" required>
+                    </div>
+                </div>
+                <button type="submit" class="btn-3d btn-primary-3d w-100 py-2">
+                    Update Budget
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Telegram Link Card with 3D Holographic Beacon -->
+    <div class="col-12 col-lg-7">
+        <div class="glass-panel p-4 p-md-5 card-3d">
+            <div class="row align-items-center g-3 mb-4">
+                <div class="col-12 col-sm-8">
+                    <div class="d-flex align-items-center gap-2 mb-1">
+                        <h2 class="h4 mb-0">
+                            <i class="bi bi-telegram text-cyan me-2"></i>Telegram Bot Link
+                        </h2>
+                        {% if link.is_linked %}
+                            <span class="badge-3d badge-emerald"><i class="bi bi-link-45deg me-1"></i>Linked</span>
+                        {% else %}
+                            <span class="badge-3d badge-amber"><i class="bi bi-exclamation-circle me-1"></i>Ready to Link</span>
+                        {% endif %}
+                    </div>
+                    <p class="text-secondary small mb-0">Live 3D connection node synced in real-time with your Telegram Bot.</p>
+                </div>
+                <div class="col-12 col-sm-4 text-center text-sm-end">
+                    <div class="canvas-3d-container mx-auto" style="height: 130px; width: 130px;" title="3D WebGL Connection Beacon">
+                        <canvas id="profile-3d-beacon"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            {% if link.is_linked %}
+                <!-- Linked State -->
+                <div class="p-4 rounded-3 text-center mb-4" style="background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.25);">
+                    <i class="bi bi-check-circle-fill text-success fs-1 d-block mb-2"></i>
+                    <h3 class="h5 text-success">Telegram Bot Connected!</h3>
+                    <p class="text-secondary small mb-2">
+                        Your account is linked with Telegram Chat ID: <code class="text-cyan">{{ link.chat_id }}</code>
+                    </p>
+                    <div class="text-muted small mb-3">Connected on: {{ link.linked_at|date:"d M Y, H:i" }}</div>
+
+                    <a href="{% url 'telegram_redirect' %}" target="_blank" rel="noopener noreferrer" class="btn-3d btn-cyan-3d py-2 px-4 d-inline-flex align-items-center gap-2">
+                        <i class="bi bi-telegram fs-5"></i> Direct Open Telegram Bot
+                    </a>
+                </div>
+
+                <form method="POST">
+                    {% csrf_token %}
+                    <button type="submit" name="unlink" class="btn-3d btn-rose-3d" onclick="return confirm('Are you sure you want to unlink your Telegram account?');">
+                        <i class="bi bi-slash-circle me-1"></i> Unlink Telegram Account
+                    </button>
+                </form>
+            {% else %}
+                <!-- Direct 1-Click Redirect to Telegram -->
+                <div class="mb-4">
+                    <a href="{% url 'telegram_redirect' %}" target="_blank" rel="noopener noreferrer" class="btn-3d btn-cyan-3d py-3 px-4 fs-5 w-100 d-flex align-items-center justify-content-center gap-2 text-white fw-bold shadow-lg text-decoration-none">
+                        <i class="bi bi-telegram fs-3"></i> Direct Redirect to Telegram
+                    </a>
+                    <div class="text-center text-secondary small mt-2">
+                        <i class="bi bi-lightning-charge-fill text-warning me-1"></i> 1-Click Connection: Directly opens Telegram to <strong>@{{ bot_username }}</strong> and auto-links your account.
+                    </div>
+                </div>
+
+                <!-- Unlinked State: Code Details -->
+                <div class="text-center py-3 mb-4 rounded-3" style="background: var(--bg-hover); border: 1px solid var(--border-subtle);">
+                    <span class="text-secondary small d-block mb-1">MANUAL TELEGRAM LINK CODE</span>
+                    {% if link.link_code %}
+                        <div class="code-box my-2" id="telegram-link-code">{{ link.link_code }}</div>
+                        <div class="d-flex justify-content-center gap-2 mt-3">
+                            <button type="button" class="btn-3d btn-secondary-3d" id="copy-code-btn">
+                                <i class="bi bi-clipboard me-1"></i> Copy Code
+                            </button>
+                            <form method="POST" class="d-inline">
+                                {% csrf_token %}
+                                <button type="submit" name="generate_code" class="btn-3d btn-secondary-3d">
+                                    <i class="bi bi-arrow-clockwise me-1"></i> Regenerate
+                                </button>
+                            </form>
+                        </div>
+                    {% else %}
+                        <form method="POST">
+                            {% csrf_token %}
+                            <button type="submit" name="generate_code" class="btn-3d btn-cyan-3d py-2 px-4">
+                                <i class="bi bi-key-fill me-1"></i> Generate Link Code
+                            </button>
+                        </form>
+                    {% endif %}
+                </div>
+
+                <!-- Step-by-step instructions -->
+                <div class="p-3 rounded-3" style="background: var(--bg-hover); border: 1px solid var(--border-subtle);">
+                    <h3 class="h6 mb-2 text-secondary text-uppercase tracking-wider">How to Link:</h3>
+                    <ol class="small text-secondary ps-3 mb-0" style="line-height: 1.9;">
+                        <li>Click <strong>Direct Redirect to Telegram</strong> above to launch the bot directly.</li>
+                        <li>Press <strong>START</strong> in Telegram to instantly complete the connection.</li>
+                        <li>Or manually open Telegram, search for <code class="text-cyan">@{{ bot_username }}</code>, and send: <code class="text-cyan">/link {% if link.link_code %}{{ link.link_code }}{% else %}YOUR_CODE{% endif %}</code></li>
+                    </ol>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    initProfile3DBeacon('profile-3d-beacon', {{ link.is_linked|yesno:"true,false" }});
+</script>
+{% endblock %}

@@ -1,0 +1,99 @@
+{% extends 'tracker/base.html' %}
+
+{% block title %}{{ title }} • Smart Tracker{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center g-4 align-items-center">
+    <!-- Left: 3D Interactive Metallic Coin Showcase -->
+    <div class="col-12 col-lg-4 text-center">
+        <div class="glass-panel p-4 animate-float-3d">
+            <span class="badge-3d badge-amber mb-2"><i class="bi bi-coin me-1"></i> Interactive 3D Currency</span>
+            <h2 class="h5 text-gradient mb-1">Live Transaction Token</h2>
+            <p class="text-secondary small mb-3">Interactive 3D WebGL metallic coin. Automatically reacts to input as you record your transactions.</p>
+            <div class="canvas-3d-container" style="height: 200px;">
+                <canvas id="expense-3d-coin"></canvas>
+            </div>
+            <div class="badge-3d badge-indigo small mt-2">
+                <i class="bi bi-lightning-charge-fill me-1"></i> Accelerates on Amount Input
+            </div>
+        </div>
+    </div>
+
+    <!-- Right: 3D Form Panel -->
+    <div class="col-12 col-lg-7">
+        <div class="glass-panel p-4 p-md-5 card-3d">
+            <div class="d-flex align-items-center justify-content-between mb-4">
+                <h1 class="h3 mb-0">
+                    <span class="text-gradient">{{ title }}</span>
+                </h1>
+                <a href="{% url 'expenses' %}" class="btn-3d btn-secondary-3d py-1 px-3 small">
+                    <i class="bi bi-arrow-left me-1"></i> Back
+                </a>
+            </div>
+
+            <form method="POST">
+                {% csrf_token %}
+
+                <!-- Category -->
+                <div class="mb-3">
+                    <label class="form-label text-secondary small fw-medium">Select Existing Category</label>
+                    {{ form.category }}
+                    {% if form.category.errors %}
+                    <div class="text-danger small mt-1">{{ form.category.errors }}</div>
+                    {% endif %}
+                </div>
+
+                <!-- Or Create New Category -->
+                <div class="mb-4">
+                    <label class="form-label text-secondary small fw-medium">Or Create New Category</label>
+                    {{ form.new_category }}
+                    <div class="form-text text-muted small">Type a new category name (e.g. "Gaming", "Health") to create it automatically.</div>
+                    {% if form.new_category.errors %}
+                    <div class="text-danger small mt-1">{{ form.new_category.errors }}</div>
+                    {% endif %}
+                </div>
+
+                <div class="hr-glass my-3" style="height: 1px; background: var(--border-subtle);"></div>
+
+                <!-- Description / Type -->
+                <div class="mb-3">
+                    <label class="form-label text-secondary small fw-medium">Item Description / Type *</label>
+                    {{ form.type }}
+                    {% if form.type.errors %}
+                    <div class="text-danger small mt-1">{{ form.type.errors }}</div>
+                    {% endif %}
+                </div>
+
+                <!-- Amount & Date -->
+                <div class="row g-3 mb-4">
+                    <div class="col-12 col-sm-6">
+                        <label class="form-label text-secondary small fw-medium">Amount (₹) *</label>
+                        {{ form.amount }}
+                        {% if form.amount.errors %}
+                        <div class="text-danger small mt-1">{{ form.amount.errors }}</div>
+                        {% endif %}
+                    </div>
+                    <div class="col-12 col-sm-6">
+                        <label class="form-label text-secondary small fw-medium">Date *</label>
+                        {{ form.date }}
+                        {% if form.date.errors %}
+                        <div class="text-danger small mt-1">{{ form.date.errors }}</div>
+                        {% endif %}
+                    </div>
+                </div>
+
+                <div class="d-flex justify-content-end gap-2 pt-2">
+                    <a href="{% url 'expenses' %}" class="btn-3d btn-secondary-3d">Cancel</a>
+                    <button type="submit" class="btn-3d btn-primary-3d">{{ button_text }}</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    initExpenseCoin3D('expense-3d-coin');
+</script>
+{% endblock %}
