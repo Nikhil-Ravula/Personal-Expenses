@@ -242,3 +242,49 @@ class TelegramBotMarkdownTests(TestCase):
         self.assertEqual(escape_md("Item *with* [brackets] and `code`"), r"Item \*with\* \[brackets] and \`code\`")
         self.assertEqual(escape_md(None), "")
 
+
+class TelegramBotPaginationTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username='pagination_user', password='password123')
+        self.cat = Category.objects.filter(user=self.user, name='Food').first()
+        for i in range(1, 32):
+            Expense.objects.create(
+                user=self.user,
+                category=self.cat,
+                type=f"Item {i}",
+                amount=Decimal('10.00'),
+                date=date.today()
+            )
+
+    async def test_pagination_pages(self):
+        from tracker.bot.handlers import query_expenses_page_db, build_show_page_content
+
+        # Page 1 (25 items)
+        p1_exp, total, count, cur_p, total_p, label = await query_expenses_page_db(
+            self.user, '', page=1, page_size=25
+        )
+        self.assertEqual(len(p1_exp), 25)
+        self.assertEqual(count, 31)
+        self.assertEqual(cur_p, 1)
+        self.assertEqual(total_p, 2)
+        self.assertEqual(total, Decimal('310.00'))
+
+        text1, kb1 = build_show_page_content(p1_exp, total, count, cur_p, total_p, label, page_size=25)
+        self.assertIn("Page 1 of 2", text1)
+        self.assertIsNotNone(kb1)
+        self.assertIn("showpage_2", str(kb1))
+
+        # Page 2 (6 remaining items)
+        p2_exp, total, count, cur_p, total_p, label = await query_expenses_page_db(
+            self.user, '', page=2, page_size=25
+        )
+        self.assertEqual(len(p2_exp), 6)
+        self.assertEqual(cur_p, 2)
+        self.assertEqual(total_p, 2)
+
+        text2, kb2 = build_show_page_content(p2_exp, total, count, cur_p, total_p, label, page_size=25)
+        self.assertIn("Page 2 of 2", text2)
+        self.assertIn("26.", text2)
+        self.assertIn("31.", text2)
+        self.assertIn("showpage_1", str(kb2))
+

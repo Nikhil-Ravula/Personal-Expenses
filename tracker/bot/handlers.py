@@ -1,4 +1,5 @@
 import re
+import math
 import logging
 from io import BytesIO
 from decimal import Decimal, InvalidOperation
@@ -178,20 +179,44 @@ def add_expense_db(user, category_name: str, exp_type: str, amount_val: Decimal)
 
 
 @sync_to_async
-def query_expenses_db(user, filter_text: str):
+def query_expenses_page_db(user, filter_text: str, page: int = 1, page_size: int = 25):
     filter_dict = parse_filter_args(filter_text, user=user)
-    qs = Expense.objects.filter(user=user).select_related('category')
-    qs = apply_expense_filters(qs, filter_dict).order_by('-date', '-created_at')[:30]
-    expenses = list(qs)
-    total = sum((e.amount for e in expenses), Decimal('0.00'))
-    return expenses, total, filter_dict['label']
+    base_qs = Expense.objects.filter(user=user).select_related('category')
+    qs = apply_expense_filters(base_qs, filter_dict)
+
+    total_count = qs.count()
+    agg = qs.aggregate(total=Sum('amount'))
+    total_amount = agg['total'] or Decimal('0.00')
+
+    total_pages = max(1, math.ceil(total_count / page_size))
+    current_page = max(1, min(page, total_pages))
+
+    offset = (current_page - 1) * page_size
+    expenses = list(qs.order_by('-date', '-created_at')[offset:offset + page_size])
+
+    return expenses, total_amount, total_count, current_page, total_pages, filter_dict['label']
 
 
 @sync_to_async
-def store_shown_list(chat_id: int, expense_ids: list):
+def store_shown_page(chat_id: int, expense_ids: list, offset: int, filter_text: str = "", reset: bool = False):
     session, _ = TelegramSession.objects.get_or_create(chat_id=chat_id)
-    session.last_shown_list = expense_ids
-    session.save(update_fields=['last_shown_list', 'updated_at'])
+    if reset:
+        current_list = []
+    else:
+        current_list = session.last_shown_list or []
+
+    needed_len = offset + len(expense_ids)
+    if len(current_list) < needed_len:
+        current_list = current_list + [None] * (needed_len - len(current_list))
+
+    for i, exp_id in enumerate(expense_ids):
+        current_list[offset + i] = exp_id
+
+    session.last_shown_list = current_list
+    pdata = session.pending_data or {}
+    pdata['show_filter'] = filter_text
+    session.pending_data = pdata
+    session.save(update_fields=['last_shown_list', 'pending_data', 'updated_at'])
 
 
 @sync_to_async
@@ -567,6 +592,39 @@ async def add_expense_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     await safe_reply(update, response_text)
 
 
+def build_show_page_content(expenses, total_amount, total_count, current_page, total_pages, label, page_size=25):
+    safe_label = escape_md(label)
+    lines = [f"📋 *Expenses ({safe_label})*", ""]
+
+    offset = (current_page - 1) * page_size
+    for idx, e in enumerate(expenses, start=offset + 1):
+        type_esc = escape_md(e.type)
+        cat_esc = escape_md(e.category.name)
+        lines.append(f"`{idx}.` {e.date.strftime('%d %b')} • *{type_esc}* ({cat_esc}) — `₹{e.amount:,.2f}`")
+
+    lines.append("")
+    if total_pages > 1:
+        lines.append(f"💰 *Total:* `₹{total_amount:,.2f}` (Page {current_page} of {total_pages} • {total_count} items)")
+    else:
+        lines.append(f"💰 *Total:* `₹{total_amount:,.2f}` ({total_count} items)")
+
+    lines.append("Tip: To delete an item, reply `/delete <number>`.")
+    text = "\n".join(lines)
+
+    keyboard = []
+    nav_row = []
+    if current_page > 1:
+        nav_row.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"showpage_{current_page - 1}"))
+    if current_page < total_pages:
+        nav_row.append(InlineKeyboardButton(f"Next ➡️ (Page {current_page + 1}/{total_pages})", callback_data=f"showpage_{current_page + 1}"))
+
+    if nav_row:
+        keyboard.append(nav_row)
+
+    reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+    return text, reply_markup
+
+
 async def show_expenses_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     user = await get_user_by_chat_id(chat_id)
@@ -575,7 +633,10 @@ async def show_expenses_handler(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
     filter_text = " ".join(context.args).strip() if context.args else ""
-    expenses, total, label = await query_expenses_db(user, filter_text)
+    page_size = 25
+    expenses, total_amount, total_count, current_page, total_pages, label = await query_expenses_page_db(
+        user, filter_text, page=1, page_size=page_size
+    )
 
     safe_label = escape_md(label)
 
@@ -583,21 +644,14 @@ async def show_expenses_handler(update: Update, context: ContextTypes.DEFAULT_TY
         await safe_reply(update, f"ℹ️ No expenses found for: *{safe_label}*.")
         return
 
-    # Store shown IDs in session for /delete and /edit
+    offset = (current_page - 1) * page_size
     expense_ids = [e.id for e in expenses]
-    await store_shown_list(chat_id, expense_ids)
+    await store_shown_page(chat_id, expense_ids, offset, filter_text=filter_text, reset=True)
 
-    lines = [f"📋 *Expenses ({safe_label})*", ""]
-    for idx, e in enumerate(expenses, start=1):
-        type_esc = escape_md(e.type)
-        cat_esc = escape_md(e.category.name)
-        lines.append(f"`{idx}.` {e.date.strftime('%d %b')} • *{type_esc}* ({cat_esc}) — `₹{e.amount:,.2f}`")
-
-    lines.append("")
-    lines.append(f"💰 *Total:* `₹{total:,.2f}` ({len(expenses)} items)")
-    lines.append("Tip: To delete an item, reply `/delete <number>`.")
-
-    await safe_reply(update, "\n".join(lines))
+    text, reply_markup = build_show_page_content(
+        expenses, total_amount, total_count, current_page, total_pages, label, page_size=page_size
+    )
+    await safe_reply(update, text, reply_markup=reply_markup)
 
 
 async def delete_expense_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -622,8 +676,8 @@ async def delete_expense_handler(update: Update, context: ContextTypes.DEFAULT_T
         await safe_reply(update, "⚠️ No active list found. Please run `/show` first to view your expenses.")
         return
 
-    if item_num < 1 or item_num > len(shown_list):
-        await safe_reply(update, f"❌ Invalid item number {item_num}. Please choose between 1 and {len(shown_list)}.")
+    if item_num < 1 or item_num > len(shown_list) or not shown_list[item_num - 1]:
+        await safe_reply(update, f"❌ Invalid item number {item_num}. Please choose a number from your `/show` list.")
         return
 
     target_id = shown_list[item_num - 1]
@@ -675,7 +729,7 @@ async def edit_expense_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     item_num = int(context.args[0])
     shown_list, _, _ = await get_session_data(chat_id)
 
-    if not shown_list or item_num < 1 or item_num > len(shown_list):
+    if not shown_list or item_num < 1 or item_num > len(shown_list) or not shown_list[item_num - 1]:
         await safe_reply(update, "❌ Invalid item number. Please use `/show` to see your current list.")
         return
 
@@ -908,6 +962,27 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
         return
 
     data = query.data
+    if data.startswith("showpage_"):
+        target_page = int(data.split("_")[1])
+        _, _, pending_data = await get_session_data(chat_id)
+        filter_text = pending_data.get('show_filter', '') if pending_data else ''
+
+        page_size = 25
+        expenses, total_amount, total_count, current_page, total_pages, label = await query_expenses_page_db(
+            user, filter_text, page=target_page, page_size=page_size
+        )
+
+        if expenses:
+            offset = (current_page - 1) * page_size
+            expense_ids = [e.id for e in expenses]
+            await store_shown_page(chat_id, expense_ids, offset, filter_text=filter_text, reset=False)
+
+            text, reply_markup = build_show_page_content(
+                expenses, total_amount, total_count, current_page, total_pages, label, page_size=page_size
+            )
+            await safe_edit_text(query, text, reply_markup=reply_markup)
+        return
+
     if data.startswith("delcat_"):
         cat_id = data.split("_")[-1]
         success, cat_name, msg = await delete_user_category_by_id_or_name(user, cat_id)
