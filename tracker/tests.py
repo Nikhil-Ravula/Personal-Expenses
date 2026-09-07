@@ -168,3 +168,77 @@ class WebViewsTests(TestCase):
         self.assertIn('https://t.me/', response['Location'])
         self.assertIn(link.link_code, response['Location'])
 
+
+    def test_categories_view_renders_and_identifies_empty(self):
+        # self.cat is 'Food'. Create an expense under it.
+        Expense.objects.create(user=self.user, category=self.cat, type='Snacks', amount=Decimal('50.00'), date=date.today())
+        # 'Shopping' is already a starter category with 0 expenses
+        empty_cat = Category.objects.filter(user=self.user, name='Shopping').first()
+        self.assertIsNotNone(empty_cat)
+
+        # 1. View all categories
+        res_all = self.client.get('/categories/')
+        self.assertEqual(res_all.status_code, 200)
+        self.assertContains(res_all, 'Food')
+        self.assertContains(res_all, 'Shopping')
+
+        # 2. View empty only
+        res_empty = self.client.get('/categories/?filter=empty')
+        self.assertEqual(res_empty.status_code, 200)
+        self.assertContains(res_empty, 'Shopping')
+        self.assertNotIn('Food', [c.name for c in res_empty.context['categories']])
+
+    def test_category_delete_flow(self):
+        empty_cat = Category.objects.create(user=self.user, name='UniqueCustomEmpty')
+        active_cat = Category.objects.filter(user=self.user, name='Bills').first()
+        Expense.objects.create(user=self.user, category=active_cat, type='Electricity', amount=Decimal('100.00'), date=date.today())
+
+        # 1. Delete empty category -> Should succeed
+        del_empty_res = self.client.post(f'/categories/{empty_cat.id}/delete/')
+        self.assertEqual(del_empty_res.status_code, 302)
+        self.assertFalse(Category.objects.filter(id=empty_cat.id).exists())
+
+        # 2. Attempt to delete active category with expenses -> Should be blocked
+        del_active_res = self.client.post(f'/categories/{active_cat.id}/delete/')
+        self.assertEqual(del_active_res.status_code, 302)
+        self.assertTrue(Category.objects.filter(id=active_cat.id).exists())
+
+
+class TelegramBotCategoryTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username='botuser', password='password123')
+        self.food = Category.objects.filter(user=self.user, name='Food').first()
+        Expense.objects.create(user=self.user, category=self.food, type='Lunch', amount=Decimal('80.00'), date=date.today())
+        self.empty = Category.objects.create(user=self.user, name='daily_items')
+
+    async def test_bot_category_helpers(self):
+        from tracker.bot.handlers import get_user_categories_data, delete_user_category_by_id_or_name
+
+        active, empty = await get_user_categories_data(self.user)
+        active_names = [c['name'] for c in active]
+        empty_names = [c['name'] for c in empty]
+
+        self.assertIn('Food', active_names)
+        self.assertIn('Daily_items', empty_names)
+
+        # Attempt to delete active category -> should fail
+        success_active, _, msg_active = await delete_user_category_by_id_or_name(self.user, 'Food')
+        self.assertFalse(success_active)
+        self.assertIn('Cannot delete', msg_active)
+
+        # Delete empty category -> should succeed
+        success_empty, name_empty, _ = await delete_user_category_by_id_or_name(self.user, 'daily_items')
+        self.assertTrue(success_empty)
+        self.assertEqual(name_empty, 'Daily_items')
+
+
+class TelegramBotMarkdownTests(TestCase):
+    def test_escape_md_helper(self):
+        from tracker.bot.handlers import escape_md
+        # Test escaping underscores which previously broke Telegram Markdown v1
+        self.assertEqual(escape_md("daily_items"), r"daily\_items")
+        self.assertEqual(escape_md("room_rent"), r"room\_rent")
+        self.assertEqual(escape_md("Scope: Category: Daily_items"), r"Scope: Category: Daily\_items")
+        self.assertEqual(escape_md("Item *with* [brackets] and `code`"), r"Item \*with\* \[brackets] and \`code\`")
+        self.assertEqual(escape_md(None), "")
+

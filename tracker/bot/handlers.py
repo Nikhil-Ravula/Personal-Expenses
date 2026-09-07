@@ -1,17 +1,78 @@
 import re
+import logging
 from io import BytesIO
 from decimal import Decimal, InvalidOperation
 from datetime import date
 from django.utils import timezone
-from django.db.models import Sum
+from django.db.models import Sum, Count
 from asgiref.sync import sync_to_async
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.helpers import escape_markdown
 from telegram.ext import ContextTypes
 
 from tracker.models import User, Category, Expense, Budget, TelegramLink, TelegramSession
 from tracker.services.filter_parser import parse_filter_args, apply_expense_filters
 from tracker.services.budget_service import get_budget_status, check_budget_thresholds_after_expense, get_or_create_budget
 from tracker.services.pdf_generator import generate_expense_pdf
+
+logger = logging.getLogger(__name__)
+
+
+# --------------------------------------------------------------------------
+# Markdown & Telegram Safe Sending Helpers
+# --------------------------------------------------------------------------
+
+def escape_md(text) -> str:
+    """
+    Safely escape characters for Telegram Markdown v1:
+    '_', '*', '`', '['
+    Prevents entities parsing errors when dynamic values (category names,
+    descriptions, usernames, labels) contain underscores or other symbols.
+    """
+    if text is None:
+        return ""
+    return escape_markdown(str(text), version=1)
+
+
+async def safe_reply(update: Update, text: str, parse_mode: str = 'Markdown', reply_markup=None):
+    """
+    Safely send a reply to Telegram. If Telegram rejects the message due to entity
+    parsing errors (e.g. malformed markdown), automatically fall back to sending
+    plain text so the user never experiences silent command failure.
+    """
+    target = None
+    if getattr(update, 'message', None):
+        target = update.message
+    elif getattr(update, 'callback_query', None) and getattr(update.callback_query, 'message', None):
+        target = update.callback_query.message
+
+    if not target:
+        return None
+
+    try:
+        return await target.reply_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
+    except Exception as e:
+        logger.warning(f"[safe_reply] Telegram rejected with parse_mode={parse_mode}: {e}. Retrying as plain text.")
+        try:
+            return await target.reply_text(text, parse_mode=None, reply_markup=reply_markup)
+        except Exception as inner:
+            logger.error(f"[safe_reply] Plain text fallback also failed: {inner}")
+            return None
+
+
+async def safe_edit_text(query, text: str, parse_mode: str = 'Markdown', reply_markup=None):
+    """
+    Safely edit message text. Automatically falls back to plain text if Markdown parsing fails.
+    """
+    try:
+        return await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
+    except Exception as e:
+        logger.warning(f"[safe_edit_text] Edit failed with parse_mode={parse_mode}: {e}. Retrying as plain text.")
+        try:
+            return await query.edit_message_text(text, parse_mode=None, reply_markup=reply_markup)
+        except Exception as inner:
+            logger.error(f"[safe_edit_text] Plain text edit fallback failed: {inner}")
+            return None
 
 
 # --------------------------------------------------------------------------
@@ -35,7 +96,8 @@ def link_chat_id_with_code(chat_id: int, code: str):
     link.linked_at = timezone.now()
     link.link_code = None  # consume code
     link.save(update_fields=['chat_id', 'linked_at', 'link_code'])
-    return True, f"✅ Successfully linked your Telegram account with user **{link.user.username}**! You can now use all commands."
+    uname_esc = escape_md(link.user.username)
+    return True, f"✅ Successfully linked your Telegram account with user *{uname_esc}*! You can now use all commands."
 
 
 @sync_to_async
@@ -43,6 +105,57 @@ def create_user_category(user, cat_name: str):
     name_clean = cat_name.strip().capitalize()
     cat, created = Category.objects.get_or_create(user=user, name=name_clean)
     return cat, created
+
+
+@sync_to_async
+def get_user_categories_data(user):
+    cats = (
+        Category.objects.filter(user=user)
+        .annotate(
+            expense_count=Count('expenses'),
+            total_spent=Sum('expenses__amount')
+        )
+        .order_by('name')
+    )
+    active = []
+    empty = []
+    for c in cats:
+        if c.expense_count > 0:
+            active.append({
+                'id': c.id,
+                'name': c.name,
+                'count': c.expense_count,
+                'total': c.total_spent or Decimal('0.00')
+            })
+        else:
+            empty.append({
+                'id': c.id,
+                'name': c.name,
+                'count': 0,
+                'total': Decimal('0.00')
+            })
+    return active, empty
+
+
+@sync_to_async
+def delete_user_category_by_id_or_name(user, identifier: str):
+    identifier_clean = identifier.strip()
+    cat = None
+    if identifier_clean.isdigit():
+        cat = Category.objects.filter(id=int(identifier_clean), user=user).first()
+    if not cat:
+        cat = Category.objects.filter(name__iexact=identifier_clean, user=user).first()
+
+    if not cat:
+        return False, None, "Category not found."
+
+    count = cat.expenses.count()
+    if count > 0:
+        return False, cat.name, f"Cannot delete '{cat.name}' because it contains {count} expense(s)."
+
+    cat_name = cat.name
+    cat.delete()
+    return True, cat_name, "Deleted successfully."
 
 
 @sync_to_async
@@ -194,116 +307,228 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "\n\n💡 Type `/help` to see all commands."
                 "\nQuick example: `/add food lunch 120`"
             )
-        await update.message.reply_text(reply, parse_mode='Markdown')
+        await safe_reply(update, reply)
         return
 
     # 2. Normal /start command
     if user:
+        uname_esc = escape_md(user.username)
         msg = (
-            f"👋 Welcome back, **{user.username}**!\n\n"
-            "Your Telegram account is connected to **Smart Expense Tracker**.\n\n"
+            f"👋 Welcome back, *{uname_esc}*!\n\n"
+            "Your Telegram account is connected to *Smart Expense Tracker*.\n\n"
             "💡 Type `/help` to see the full list of commands.\n"
             "Quick example: `/add food pizza 150`"
         )
     else:
         msg = (
-            "👋 Welcome to **Smart Expense Tracker Bot**!\n\n"
+            "👋 Welcome to *Smart Expense Tracker Bot*!\n\n"
             "To link your Telegram account with your web dashboard:\n"
             "1. Log into your dashboard on the website.\n"
-            "2. Navigate to your **Profile** page and click **Direct Redirect to Telegram**.\n"
+            "2. Navigate to your *Profile* page and click *Direct Redirect to Telegram*.\n"
             "3. Or send the command: `/link <YOUR_CODE>` (e.g. `/link A7X92B`)\n\n"
             "Once linked, all your expenses and reports will sync in real time!"
         )
-    await update.message.reply_text(msg, parse_mode='Markdown')
+    await safe_reply(update, msg)
 
 
 async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
-        "📊 **Smart Expense Tracker - Available Commands**\n\n"
-        "🔗 **Account Linking**\n"
+        "📊 *Smart Expense Tracker - Available Commands*\n\n"
+        "🔗 *Account Linking*\n"
         "• `/link <code>` — Connect your Telegram to your web account\n\n"
-        "💸 **Adding Expenses**\n"
+        "💸 *Adding Expenses*\n"
         "• `/add <category> <type> <price>`\n"
         "  _Examples:_ `/add food pizza 50` • `/add travel auto 20`\n\n"
-        "📋 **Viewing Expenses**\n"
+        "📋 *Viewing Expenses*\n"
         "• `/show` — Show recent expenses\n"
         "• `/show <month>` — e.g. `/show september`\n"
         "• `/show <date>` — e.g. `/show 26 september 2026`\n\n"
-        "🗑️ **Deleting & Editing**\n"
+        "🗑️ *Deleting & Editing*\n"
         "• `/delete <number>` — Delete item at that position from the last `/show` list\n"
         "• `/edit <number>` — Modify description/amount of item from the last `/show` list\n\n"
-        "💰 **Totals & Analytics**\n"
+        "💰 *Totals & Analytics*\n"
         "• `/total` — Total of all expenses\n"
         "• `/total <month>` — Total for that month\n"
         "• `/total <category>` — Total for that category\n"
         "• `/total <month> <category>` — Category total for that month\n\n"
-        "🏷️ **Categories**\n"
-        "• `/create <category>` — Create custom category (e.g. `/create shopping`)\n\n"
-        "🎯 **Monthly Budget**\n"
+        "🏷️ *Categories*\n"
+        "• `/create <category>` — Create custom category (e.g. `/create shopping`)\n"
+        "• `/categories` — List all categories (shows active & empty)\n"
+        "• `/empty_categories` — Show only empty categories with delete buttons\n"
+        "• `/delete_category <name>` — Delete an empty category\n\n"
+        "🎯 *Monthly Budget*\n"
         "• `/budget` — View current budget status, spent & remaining\n"
         "• `/budget <amount>` — Set budget limit for current month\n"
         "• `/budget add <amount>` — Add amount to current budget\n"
         "• `/budget remove <amount>` — Subtract amount from budget\n"
         "• `/budget remaining` — Show only remaining budget\n\n"
-        "📄 **PDF Reports**\n"
+        "📄 *PDF Reports*\n"
         "• `/pdf` — Download PDF of all expenses\n"
         "• `/pdf <month>` — PDF for that month (e.g. `/pdf september`)\n"
         "• `/pdf <category>` — PDF for that category\n"
         "• `/pdf <month> <category>` — PDF for category within that month"
     )
-    await update.message.reply_text(help_text, parse_mode='Markdown')
+    await safe_reply(update, help_text)
 
 
 async def link_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     if not context.args:
-        await update.message.reply_text(
+        await safe_reply(
+            update,
             "⚠️ Please provide your 6-digit link code.\n"
             "Format: `/link <code>` (e.g. `/link 4B9K2A`)\n"
-            "Generate your code from the web Profile page.",
-            parse_mode='Markdown'
+            "Generate your code from the web Profile page."
         )
         return
 
     code = context.args[0]
     success, reply = await link_chat_id_with_code(chat_id, code)
-    await update.message.reply_text(reply, parse_mode='Markdown')
+    await safe_reply(update, reply)
 
 
 async def create_category_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = await get_user_by_chat_id(update.effective_chat.id)
     if not user:
-        await update.message.reply_text("⚠️ Please link your account first using `/link <code>`.", parse_mode='Markdown')
+        await safe_reply(update, "⚠️ Please link your account first using `/link <code>`.")
         return
 
     if not context.args:
-        await update.message.reply_text("⚠️ Please specify a category name.\nFormat: `/create <category>` (e.g. `/create Books`)", parse_mode='Markdown')
+        await safe_reply(update, "⚠️ Please specify a category name.\nFormat: `/create <category>` (e.g. `/create Books`)")
         return
 
     cat_name = " ".join(context.args).strip()
     cat, created = await create_user_category(user, cat_name)
+    cat_esc = escape_md(cat.name)
     if created:
-        await update.message.reply_text(f"✅ Category **{cat.name}** created successfully!", parse_mode='Markdown')
+        await safe_reply(update, f"✅ Category *{cat_esc}* created successfully!")
     else:
-        await update.message.reply_text(f"ℹ️ Category **{cat.name}** already exists.", parse_mode='Markdown')
+        await safe_reply(update, f"ℹ️ Category *{cat_esc}* already exists.")
+
+
+async def categories_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    user = await get_user_by_chat_id(chat_id)
+    if not user:
+        await safe_reply(update, "⚠️ Please link your account first using `/link <code>`.")
+        return
+
+    active, empty = await get_user_categories_data(user)
+
+    if not active and not empty:
+        await safe_reply(
+            update,
+            "🏷️ You have no categories yet.\n"
+            "Create one using: `/create <category>` (e.g. `/create Shopping`)"
+        )
+        return
+
+    lines = ["🏷️ *Your Expense Categories*", ""]
+
+    if active:
+        lines.append("*Active Categories:*")
+        for c in active:
+            c_esc = escape_md(c['name'])
+            lines.append(f"• *{c_esc}* — {c['count']} expense(s) (`₹{c['total']:,.2f}`)")
+        lines.append("")
+
+    keyboard = []
+    if empty:
+        lines.append("🗑️ *Empty Categories (0 expenses • Safe to delete):*")
+        for idx, c in enumerate(empty, start=1):
+            c_esc = escape_md(c['name'])
+            lines.append(f"`{idx}.` *{c_esc}* (0 expenses)")
+            keyboard.append([
+                InlineKeyboardButton(f"🗑️ Delete {c['name']}", callback_data=f"delcat_{c['id']}")
+            ])
+        lines.append("")
+        lines.append("💡 _Tap a button above to delete, or send:_ `/delete_category <name>`")
+    else:
+        lines.append("✨ All your categories currently have active expenses!")
+
+    reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+    await safe_reply(update, "\n".join(lines), reply_markup=reply_markup)
+
+
+async def empty_categories_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    user = await get_user_by_chat_id(chat_id)
+    if not user:
+        await safe_reply(update, "⚠️ Please link your account first using `/link <code>`.")
+        return
+
+    _, empty = await get_user_categories_data(user)
+
+    if not empty:
+        await safe_reply(update, "✅ You have no empty categories! All categories have recorded expenses.")
+        return
+
+    lines = [
+        "🗑️ *Empty Categories (0 Expenses)*",
+        "These categories have no expenses and can safely be deleted:",
+        ""
+    ]
+    keyboard = []
+    for idx, c in enumerate(empty, start=1):
+        c_esc = escape_md(c['name'])
+        lines.append(f"`{idx}.` *{c_esc}*")
+        keyboard.append([
+            InlineKeyboardButton(f"🗑️ Delete {c['name']}", callback_data=f"delcat_{c['id']}")
+        ])
+
+    lines.append("")
+    lines.append("💡 _Tap a button above to delete, or send:_ `/delete_category <name>`")
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await safe_reply(update, "\n".join(lines), reply_markup=reply_markup)
+
+
+async def delete_category_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    user = await get_user_by_chat_id(chat_id)
+    if not user:
+        await safe_reply(update, "⚠️ Please link your account first using `/link <code>`.")
+        return
+
+    if not context.args:
+        await safe_reply(
+            update,
+            "⚠️ Please specify the category to delete.\n"
+            "Usage: `/delete_category <name>` (e.g. `/delete_category daily_items`)\n"
+            "💡 Use `/empty_categories` to see all empty categories."
+        )
+        return
+
+    cat_query = " ".join(context.args).strip()
+    success, cat_name, msg = await delete_user_category_by_id_or_name(user, cat_query)
+
+    if success:
+        c_esc = escape_md(cat_name)
+        await safe_reply(update, f"🗑️ Deleted empty category *{c_esc}* successfully!")
+    else:
+        c_esc = escape_md(cat_name or cat_query)
+        if "contains" in msg:
+            await safe_reply(update, f"⚠️ Cannot delete category *{c_esc}* because it contains active expenses. Only empty categories can be deleted.")
+        else:
+            await safe_reply(update, f"❌ Category *{c_esc}* was not found.")
 
 
 async def add_expense_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = await get_user_by_chat_id(update.effective_chat.id)
     if not user:
-        await update.message.reply_text("⚠️ Please link your account first using `/link <code>`.", parse_mode='Markdown')
+        await safe_reply(update, "⚠️ Please link your account first using `/link <code>`.")
         return
 
     # Syntax: /add <category> <type> <price>
     # E.g. /add food pizza 50  OR  /add "travel expenses" metro 45
     if not context.args or len(context.args) < 3:
-        await update.message.reply_text(
+        await safe_reply(
+            update,
             "⚠️ Invalid format.\n"
             "Usage: `/add <category> <type> <price>`\n"
             "Examples:\n"
             "• `/add food pizza 50`\n"
-            "• `/add travel auto 10`",
-            parse_mode='Markdown'
+            "• `/add travel auto 10`"
         )
         return
 
@@ -314,7 +539,8 @@ async def add_expense_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         if price <= 0:
             raise ValueError()
     except (InvalidOperation, ValueError):
-        await update.message.reply_text(f"❌ Invalid price '{price_str}'. Price must be a positive number.", parse_mode='Markdown')
+        price_esc = escape_md(price_str)
+        await safe_reply(update, f"❌ Invalid price '{price_esc}'. Price must be a positive number.")
         return
 
     # Category is the first argument, and middle arguments form the description
@@ -323,61 +549,69 @@ async def add_expense_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     expense, alerts = await add_expense_db(user, category_name, exp_type, price)
 
+    type_esc = escape_md(expense.type)
+    cat_esc = escape_md(expense.category.name)
+
     response_text = (
-        f"✅ **Expense Added!**\n"
-        f"• **Item:** {expense.type}\n"
-        f"• **Amount:** ₹{expense.amount:,.2f}\n"
-        f"• **Category:** {expense.category.name}\n"
-        f"• **Date:** {expense.date.strftime('%d %b %Y')}"
+        f"✅ *Expense Added!*\n"
+        f"• *Item:* {type_esc}\n"
+        f"• *Amount:* `₹{expense.amount:,.2f}`\n"
+        f"• *Category:* {cat_esc}\n"
+        f"• *Date:* {expense.date.strftime('%d %b %Y')}"
     )
 
     if alerts:
-        response_text += "\n\n" + "\n\n".join(alerts)
+        escaped_alerts = [escape_md(a) for a in alerts]
+        response_text += "\n\n" + "\n\n".join(escaped_alerts)
 
-    await update.message.reply_text(response_text, parse_mode='Markdown')
+    await safe_reply(update, response_text)
 
 
 async def show_expenses_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     user = await get_user_by_chat_id(chat_id)
     if not user:
-        await update.message.reply_text("⚠️ Please link your account first using `/link <code>`.", parse_mode='Markdown')
+        await safe_reply(update, "⚠️ Please link your account first using `/link <code>`.")
         return
 
     filter_text = " ".join(context.args).strip() if context.args else ""
     expenses, total, label = await query_expenses_db(user, filter_text)
 
+    safe_label = escape_md(label)
+
     if not expenses:
-        await update.message.reply_text(f"ℹ️ No expenses found for: **{label}**.", parse_mode='Markdown')
+        await safe_reply(update, f"ℹ️ No expenses found for: *{safe_label}*.")
         return
 
     # Store shown IDs in session for /delete and /edit
     expense_ids = [e.id for e in expenses]
     await store_shown_list(chat_id, expense_ids)
 
-    lines = [f"📋 **Expenses ({label})**", ""]
+    lines = [f"📋 *Expenses ({safe_label})*", ""]
     for idx, e in enumerate(expenses, start=1):
-        lines.append(f"`{idx}.` {e.date.strftime('%d %b')} • **{e.type}** ({e.category.name}) — `₹{e.amount:,.2f}`")
+        type_esc = escape_md(e.type)
+        cat_esc = escape_md(e.category.name)
+        lines.append(f"`{idx}.` {e.date.strftime('%d %b')} • *{type_esc}* ({cat_esc}) — `₹{e.amount:,.2f}`")
 
     lines.append("")
-    lines.append(f"💰 **Total:** `₹{total:,.2f}` ({len(expenses)} items)")
-    lines.append("_Tip: To delete an item, reply `/delete <number>`._")
+    lines.append(f"💰 *Total:* `₹{total:,.2f}` ({len(expenses)} items)")
+    lines.append("Tip: To delete an item, reply `/delete <number>`.")
 
-    await update.message.reply_text("\n".join(lines), parse_mode='Markdown')
+    await safe_reply(update, "\n".join(lines))
 
 
 async def delete_expense_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     user = await get_user_by_chat_id(chat_id)
     if not user:
-        await update.message.reply_text("⚠️ Please link your account first using `/link <code>`.", parse_mode='Markdown')
+        await safe_reply(update, "⚠️ Please link your account first using `/link <code>`.")
         return
 
     if not context.args or not context.args[0].isdigit():
-        await update.message.reply_text(
+        await safe_reply(
+            update,
             "⚠️ Please specify the number from your last `/show` list.\n"
-            "Example: `/delete 1`",
-            parse_mode='Markdown'
+            "Example: `/delete 1`"
         )
         return
 
@@ -385,22 +619,21 @@ async def delete_expense_handler(update: Update, context: ContextTypes.DEFAULT_T
     shown_list, _, _ = await get_session_data(chat_id)
 
     if not shown_list:
-        await update.message.reply_text("⚠️ No active list found. Please run `/show` first to view your expenses.", parse_mode='Markdown')
+        await safe_reply(update, "⚠️ No active list found. Please run `/show` first to view your expenses.")
         return
 
     if item_num < 1 or item_num > len(shown_list):
-        await update.message.reply_text(f"❌ Invalid item number {item_num}. Please choose between 1 and {len(shown_list)}.", parse_mode='Markdown')
+        await safe_reply(update, f"❌ Invalid item number {item_num}. Please choose between 1 and {len(shown_list)}.")
         return
 
     target_id = shown_list[item_num - 1]
 
-    # Look up expense details to confirm
     def fetch_expense():
         return Expense.objects.filter(id=target_id, user=user).select_related('category').first()
 
     exp = await sync_to_async(fetch_expense)()
     if not exp:
-        await update.message.reply_text("❌ Expense not found (it may have already been deleted).", parse_mode='Markdown')
+        await safe_reply(update, "❌ Expense not found (it may have already been deleted).")
         return
 
     # Store pending deletion in session
@@ -418,10 +651,13 @@ async def delete_expense_handler(update: Update, context: ContextTypes.DEFAULT_T
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    await update.message.reply_text(
-        f"❓ Are you sure you want to delete:\n**{exp.type}** — ₹{exp.amount:,.2f} ({exp.category.name}) on {exp.date.strftime('%d %b %Y')}?",
-        reply_markup=reply_markup,
-        parse_mode='Markdown'
+    type_esc = escape_md(exp.type)
+    cat_esc = escape_md(exp.category.name)
+
+    await safe_reply(
+        update,
+        f"❓ Are you sure you want to delete:\n*{type_esc}* — `₹{exp.amount:,.2f}` ({cat_esc}) on {exp.date.strftime('%d %b %Y')}?",
+        reply_markup=reply_markup
     )
 
 
@@ -429,18 +665,18 @@ async def edit_expense_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     chat_id = update.effective_chat.id
     user = await get_user_by_chat_id(chat_id)
     if not user:
-        await update.message.reply_text("⚠️ Please link your account first using `/link <code>`.", parse_mode='Markdown')
+        await safe_reply(update, "⚠️ Please link your account first using `/link <code>`.")
         return
 
     if not context.args or not context.args[0].isdigit():
-        await update.message.reply_text("⚠️ Usage: `/edit <number>`\nExample: `/edit 1` (referencing the last `/show` list)", parse_mode='Markdown')
+        await safe_reply(update, "⚠️ Usage: `/edit <number>`\nExample: `/edit 1` (referencing the last `/show` list)")
         return
 
     item_num = int(context.args[0])
     shown_list, _, _ = await get_session_data(chat_id)
 
     if not shown_list or item_num < 1 or item_num > len(shown_list):
-        await update.message.reply_text("❌ Invalid item number. Please use `/show` to see your current list.", parse_mode='Markdown')
+        await safe_reply(update, "❌ Invalid item number. Please use `/show` to see your current list.")
         return
 
     target_id = shown_list[item_num - 1]
@@ -450,45 +686,47 @@ async def edit_expense_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
     exp = await sync_to_async(fetch_expense)()
     if not exp:
-        await update.message.reply_text("❌ Expense not found.", parse_mode='Markdown')
+        await safe_reply(update, "❌ Expense not found.")
         return
 
     await set_pending_action(chat_id, action='edit_pending', data={'expense_id': target_id})
-    await update.message.reply_text(
-        f"✏️ Editing **{exp.type}** (Current amount: ₹{exp.amount}).\n\n"
+    type_esc = escape_md(exp.type)
+    await safe_reply(
+        update,
+        f"✏️ Editing *{type_esc}* (Current amount: `₹{exp.amount:,.2f}`).\n\n"
         "Please reply with the new description and amount:\n"
-        "Format: `<description> <amount>` (e.g. `Pizza with cheese 60`)",
-        parse_mode='Markdown'
+        "Format: `<description> <amount>` (e.g. `Pizza with cheese 60`)"
     )
 
 
 async def total_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = await get_user_by_chat_id(update.effective_chat.id)
     if not user:
-        await update.message.reply_text("⚠️ Please link your account first using `/link <code>`.", parse_mode='Markdown')
+        await safe_reply(update, "⚠️ Please link your account first using `/link <code>`.")
         return
 
     filter_text = " ".join(context.args).strip() if context.args else ""
     total, count, label = await query_total_db(user, filter_text)
 
+    safe_label = escape_md(label)
     msg = (
-        f"📊 **Expense Total**\n"
-        f"• **Scope:** {label}\n"
-        f"• **Total Amount:** `₹{total:,.2f}`\n"
-        f"• **Transactions:** {count}"
+        f"📊 *Expense Total*\n"
+        f"• *Scope:* {safe_label}\n"
+        f"• *Total Amount:* `₹{total:,.2f}`\n"
+        f"• *Transactions:* {count}"
     )
-    await update.message.reply_text(msg, parse_mode='Markdown')
+    await safe_reply(update, msg)
 
 
 async def pdf_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     user = await get_user_by_chat_id(chat_id)
     if not user:
-        await update.message.reply_text("⚠️ Please link your account first using `/link <code>`.", parse_mode='Markdown')
+        await safe_reply(update, "⚠️ Please link your account first using `/link <code>`.")
         return
 
     filter_text = " ".join(context.args).strip() if context.args else ""
-    status_msg = await update.message.reply_text("⏳ Generating your PDF report...", parse_mode='Markdown')
+    status_msg = await safe_reply(update, "⏳ Generating your PDF report...")
 
     try:
         pdf_bytes, filename = await generate_pdf_for_user(user, filter_text)
@@ -496,17 +734,21 @@ async def pdf_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             chat_id=chat_id,
             document=BytesIO(pdf_bytes),
             filename=filename,
-            caption=f"📄 Expense Report • Smart Tracker"
+            caption="📄 Expense Report • Smart Tracker"
         )
-        await status_msg.delete()
+        if status_msg:
+            await status_msg.delete()
     except Exception as e:
-        await status_msg.edit_text(f"❌ Failed to generate PDF: {str(e)}")
+        if status_msg:
+            await status_msg.edit_text(f"❌ Failed to generate PDF: {str(e)}")
+        else:
+            await safe_reply(update, f"❌ Failed to generate PDF: {str(e)}")
 
 
 async def budget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = await get_user_by_chat_id(update.effective_chat.id)
     if not user:
-        await update.message.reply_text("⚠️ Please link your account first using `/link <code>`.", parse_mode='Markdown')
+        await safe_reply(update, "⚠️ Please link your account first using `/link <code>`.")
         return
 
     args = context.args
@@ -515,23 +757,23 @@ async def budget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not args:
         status = await get_budget_status_db(user)
         if not status['has_budget']:
-            await update.message.reply_text(
+            await safe_reply(
+                update,
                 f"ℹ️ No budget set for {timezone.now().strftime('%B %Y')}.\n"
-                "To set a budget limit, send: `/budget <amount>` (e.g. `/budget 5000`)",
-                parse_mode='Markdown'
+                "To set a budget limit, send: `/budget <amount>` (e.g. `/budget 5000`)"
             )
             return
 
         status_icon = "🚨" if status['is_over'] else ("⚠️" if status['percent_spent'] >= 80 else "✅")
         msg = (
-            f"{status_icon} **Monthly Budget Status ({timezone.now().strftime('%B %Y')})**\n\n"
-            f"• **Budget Limit:** ₹{status['budget_amount']:,.2f}\n"
-            f"• **Total Spent:** ₹{status['total_spent']:,.2f} ({status['percent_spent']}%)\n"
-            f"• **Remaining:** ₹{status['remaining']:,.2f}\n"
+            f"{status_icon} *Monthly Budget Status ({timezone.now().strftime('%B %Y')})*\n\n"
+            f"• *Budget Limit:* `₹{status['budget_amount']:,.2f}`\n"
+            f"• *Total Spent:* `₹{status['total_spent']:,.2f}` ({status['percent_spent']}%)\n"
+            f"• *Remaining:* `₹{status['remaining']:,.2f}`\n"
         )
         if status['is_over']:
-            msg += f"\n🚨 **Over Budget by ₹{abs(status['remaining']):,.2f}!**"
-        await update.message.reply_text(msg, parse_mode='Markdown')
+            msg += f"\n🚨 *Over Budget by ₹{abs(status['remaining']):,.2f}!*"
+        await safe_reply(update, msg)
         return
 
     first_arg = args[0].lower()
@@ -540,35 +782,35 @@ async def budget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if first_arg == 'remaining':
         status = await get_budget_status_db(user)
         if not status['has_budget']:
-            await update.message.reply_text("ℹ️ No budget set for this month yet. Set one via `/budget <amount>`.", parse_mode='Markdown')
+            await safe_reply(update, "ℹ️ No budget set for this month yet. Set one via `/budget <amount>`.")
             return
-        await update.message.reply_text(f"💰 Remaining budget for this month: **₹{status['remaining']:,.2f}**", parse_mode='Markdown')
+        await safe_reply(update, f"💰 Remaining budget for this month: `₹{status['remaining']:,.2f}`")
         return
 
     # 3. /budget add <amount>
     if first_arg == 'add':
         if len(args) < 2:
-            await update.message.reply_text("⚠️ Usage: `/budget add <amount>` (e.g. `/budget add 1000`)", parse_mode='Markdown')
+            await safe_reply(update, "⚠️ Usage: `/budget add <amount>` (e.g. `/budget add 1000`)")
             return
         try:
             amt = Decimal(args[1])
             budget = await modify_budget_db(user, action='add', amount_val=amt)
-            await update.message.reply_text(f"✅ Added ₹{amt:,.2f}. New budget for this month: **₹{budget.amount:,.2f}**", parse_mode='Markdown')
+            await safe_reply(update, f"✅ Added ₹{amt:,.2f}. New budget for this month: `₹{budget.amount:,.2f}`")
         except (InvalidOperation, ValueError):
-            await update.message.reply_text("❌ Invalid amount.", parse_mode='Markdown')
+            await safe_reply(update, "❌ Invalid amount.")
         return
 
     # 4. /budget remove <amount>
     if first_arg == 'remove':
         if len(args) < 2:
-            await update.message.reply_text("⚠️ Usage: `/budget remove <amount>` (e.g. `/budget remove 500`)", parse_mode='Markdown')
+            await safe_reply(update, "⚠️ Usage: `/budget remove <amount>` (e.g. `/budget remove 500`)")
             return
         try:
             amt = Decimal(args[1])
             budget = await modify_budget_db(user, action='remove', amount_val=amt)
-            await update.message.reply_text(f"✅ Deducted ₹{amt:,.2f}. New budget for this month: **₹{budget.amount:,.2f}**", parse_mode='Markdown')
+            await safe_reply(update, f"✅ Deducted ₹{amt:,.2f}. New budget for this month: `₹{budget.amount:,.2f}`")
         except (InvalidOperation, ValueError):
-            await update.message.reply_text("❌ Invalid amount.", parse_mode='Markdown')
+            await safe_reply(update, "❌ Invalid amount.")
         return
 
     # 5. /budget <amount> OR /budget <month> <amount>
@@ -579,22 +821,22 @@ async def budget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             month_val = parsed['month']
             amt = Decimal(args[1])
             budget = await modify_budget_db(user, action='set', amount_val=amt, month=month_val)
-            await update.message.reply_text(f"🎯 Budget for month {month_val} set to **₹{budget.amount:,.2f}**.", parse_mode='Markdown')
+            await safe_reply(update, f"🎯 Budget for month {month_val} set to `₹{budget.amount:,.2f}`.")
             return
 
         amt = Decimal(first_arg)
         budget = await modify_budget_db(user, action='set', amount_val=amt)
-        await update.message.reply_text(f"🎯 Budget for {timezone.now().strftime('%B %Y')} set to **₹{budget.amount:,.2f}**.", parse_mode='Markdown')
+        await safe_reply(update, f"🎯 Budget for {timezone.now().strftime('%B %Y')} set to `₹{budget.amount:,.2f}`.")
     except (InvalidOperation, ValueError):
-        await update.message.reply_text(
+        await safe_reply(
+            update,
             "⚠️ Invalid budget command.\n"
             "Examples:\n"
             "• `/budget 5000`\n"
             "• `/budget september 6000`\n"
             "• `/budget add 1000`\n"
             "• `/budget remove 500`\n"
-            "• `/budget remaining`",
-            parse_mode='Markdown'
+            "• `/budget remaining`"
         )
 
 
@@ -617,12 +859,13 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             success, desc = await delete_expense_by_id(user, target_id)
             await clear_pending_action(chat_id)
             if success:
-                await update.message.reply_text(f"🗑️ Deleted **{desc}**.", parse_mode='Markdown')
+                desc_esc = escape_md(desc)
+                await safe_reply(update, f"🗑️ Deleted *{desc_esc}*.")
             else:
-                await update.message.reply_text("❌ Expense already deleted or not found.", parse_mode='Markdown')
+                await safe_reply(update, "❌ Expense already deleted or not found.")
         elif text.lower() in ['no', 'n', 'cancel']:
             await clear_pending_action(chat_id)
-            await update.message.reply_text("❌ Deletion cancelled.", parse_mode='Markdown')
+            await safe_reply(update, "❌ Deletion cancelled.")
         return
 
     if pending_action == 'set_monthly_budget':
@@ -631,9 +874,9 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             amt = Decimal(text.replace('₹', '').replace(',', '').strip())
             budget = await modify_budget_db(user, action='set', amount_val=amt)
             await clear_pending_action(chat_id)
-            await update.message.reply_text(f"🎯 Budget for {timezone.now().strftime('%B %Y')} set to **₹{budget.amount:,.2f}**!", parse_mode='Markdown')
+            await safe_reply(update, f"🎯 Budget for {timezone.now().strftime('%B %Y')} set to `₹{budget.amount:,.2f}`!")
         except (InvalidOperation, ValueError):
-            await update.message.reply_text("Please reply with a valid number for your budget, or send `/help`.", parse_mode='Markdown')
+            await safe_reply(update, "Please reply with a valid number for your budget, or send `/help`.")
         return
 
     if pending_action == 'edit_pending':
@@ -646,13 +889,14 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                 success, exp = await edit_expense_db(user, target_id, new_type, new_amount)
                 await clear_pending_action(chat_id)
                 if success:
-                    await update.message.reply_text(f"✅ Updated to **{exp.type}** — ₹{exp.amount:,.2f}!", parse_mode='Markdown')
+                    type_esc = escape_md(exp.type)
+                    await safe_reply(update, f"✅ Updated to *{type_esc}* — `₹{exp.amount:,.2f}`!")
                 else:
-                    await update.message.reply_text("❌ Expense not found.", parse_mode='Markdown')
+                    await safe_reply(update, "❌ Expense not found.")
                 return
             except (InvalidOperation, ValueError):
                 pass
-        await update.message.reply_text("⚠️ Format: `<description> <amount>` (e.g. `Dinner 150`) or type `/cancel`.", parse_mode='Markdown')
+        await safe_reply(update, "⚠️ Format: `<description> <amount>` (e.g. `Dinner 150`) or type `/cancel`.")
 
 
 async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -664,14 +908,25 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
         return
 
     data = query.data
+    if data.startswith("delcat_"):
+        cat_id = data.split("_")[-1]
+        success, cat_name, msg = await delete_user_category_by_id_or_name(user, cat_id)
+        if success:
+            c_esc = escape_md(cat_name)
+            await safe_edit_text(query, f"🗑️ Deleted empty category *{c_esc}*.")
+        else:
+            await safe_edit_text(query, f"⚠️ {msg}")
+        return
+
     if data.startswith("del_yes_"):
         exp_id = int(data.split("_")[-1])
         success, desc = await delete_expense_by_id(user, exp_id)
         await clear_pending_action(chat_id)
         if success:
-            await query.edit_message_text(f"🗑️ Deleted **{desc}**.", parse_mode='Markdown')
+            desc_esc = escape_md(desc)
+            await safe_edit_text(query, f"🗑️ Deleted *{desc_esc}*.")
         else:
-            await query.edit_message_text("❌ Expense already deleted or not found.", parse_mode='Markdown')
+            await safe_edit_text(query, "❌ Expense already deleted or not found.")
     elif data == "del_no":
         await clear_pending_action(chat_id)
-        await query.edit_message_text("❌ Deletion cancelled.")
+        await safe_edit_text(query, "❌ Deletion cancelled.")

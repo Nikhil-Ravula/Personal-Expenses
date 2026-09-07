@@ -45,6 +45,12 @@ async def bot_error_handler(update: object, context) -> None:
         await asyncio.sleep(2)
     else:
         logger.error(f"[Telegram Bot Error]: {err}")
+        try:
+            from telegram import Update
+            if isinstance(update, Update) and update.effective_message:
+                await update.effective_message.reply_text("⚠️ An unexpected error occurred while processing your request. Please try again.")
+        except Exception:
+            pass
 
 
 def build_bot_application(token: str, loop=None):
@@ -60,6 +66,9 @@ def build_bot_application(token: str, loop=None):
         help_handler,
         link_handler,
         create_category_handler,
+        categories_handler,
+        empty_categories_handler,
+        delete_category_handler,
         add_expense_handler,
         show_expenses_handler,
         delete_expense_handler,
@@ -92,6 +101,11 @@ def build_bot_application(token: str, loop=None):
     application.add_handler(CommandHandler("help", help_handler))
     application.add_handler(CommandHandler("link", link_handler))
     application.add_handler(CommandHandler("create", create_category_handler))
+    application.add_handler(CommandHandler("categories", categories_handler))
+    application.add_handler(CommandHandler("category", categories_handler))
+    application.add_handler(CommandHandler("empty_categories", empty_categories_handler))
+    application.add_handler(CommandHandler("delete_category", delete_category_handler))
+    application.add_handler(CommandHandler("delcat", delete_category_handler))
     application.add_handler(CommandHandler("add", add_expense_handler))
     application.add_handler(CommandHandler("show", show_expenses_handler))
     application.add_handler(CommandHandler("delete", delete_expense_handler))

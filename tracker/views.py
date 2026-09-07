@@ -396,3 +396,72 @@ def logout_view(request):
     logout(request)
     messages.info(request, "You have been logged out.")
     return redirect('login')
+
+
+@login_required
+def categories_view(request):
+    user = request.user
+    show_filter = request.GET.get('filter', 'all')  # 'all' or 'empty'
+
+    categories = (
+        Category.objects.filter(user=user)
+        .annotate(
+            expense_count=Count('expenses'),
+            total_spent=Sum('expenses__amount')
+        )
+        .order_by('name')
+    )
+
+    total_categories = categories.count()
+    empty_categories = [c for c in categories if c.expense_count == 0]
+    active_categories = [c for c in categories if c.expense_count > 0]
+    empty_count = len(empty_categories)
+    active_count = len(active_categories)
+
+    if show_filter == 'empty':
+        displayed_categories = empty_categories
+    else:
+        displayed_categories = list(categories)
+
+    context = {
+        'categories': displayed_categories,
+        'total_categories': total_categories,
+        'empty_count': empty_count,
+        'active_count': active_count,
+        'current_filter': show_filter,
+    }
+    return render(request, 'tracker/categories.html', context)
+
+
+@login_required
+def category_create_view(request):
+    if request.method == 'POST':
+        name = request.POST.get('name', '').strip()
+        if not name:
+            messages.error(request, "Please enter a category name.")
+        else:
+            cat_clean = name.capitalize()
+            cat, created = Category.objects.get_or_create(user=request.user, name=cat_clean)
+            if created:
+                messages.success(request, f"Category '{cat.name}' created successfully!")
+            else:
+                messages.info(request, f"Category '{cat.name}' already exists.")
+    return redirect('categories')
+
+
+@login_required
+def category_delete_view(request, pk):
+    if request.method == 'POST':
+        category = get_object_or_404(Category, pk=pk, user=request.user)
+        expense_count = category.expenses.count()
+        if expense_count > 0:
+            messages.error(
+                request,
+                f"Cannot delete '{category.name}' because it contains {expense_count} expense(s). "
+                "Only empty categories can be deleted to protect your expense records."
+            )
+        else:
+            cat_name = category.name
+            category.delete()
+            messages.success(request, f"Empty category '{cat_name}' deleted successfully.")
+    return redirect('categories')

@@ -1,0 +1,170 @@
+{% extends 'tracker/base.html' %}
+
+{% block title %}Categories • Smart Tracker{% endblock %}
+
+{% block content %}
+<!-- Page Header -->
+<div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3 mb-4">
+    <div>
+        <h1 class="h2 mb-1">
+            <span class="text-gradient">Categories Management</span>
+        </h1>
+        <p class="text-secondary mb-0">Organize your expenses, identify unused categories, and safely delete empty ones.</p>
+    </div>
+    <div class="d-flex align-items-center gap-2 flex-wrap">
+        <a href="{% url 'expenses' %}" class="btn-3d btn-secondary-3d">
+            <i class="bi bi-receipt me-1"></i> View All Expenses
+        </a>
+        <a href="{% url 'expense_add' %}" class="btn-3d btn-primary-3d">
+            <i class="bi bi-plus-circle-fill me-1"></i> Add Expense
+        </a>
+    </div>
+</div>
+
+<!-- KPI Summary Cards -->
+<div class="row g-3 mb-4">
+    <div class="col-12 col-sm-4">
+        <div class="glass-panel p-3 card-3d text-center">
+            <div class="text-secondary small fw-medium mb-1">
+                <i class="bi bi-tags-fill me-1 text-gradient-cyan"></i> Total Categories
+            </div>
+            <div class="display-6 fw-bold text-primary">{{ total_categories }}</div>
+            <div class="text-muted small mt-1">Available for transactions</div>
+        </div>
+    </div>
+    <div class="col-12 col-sm-4">
+        <div class="glass-panel p-3 card-3d text-center">
+            <div class="text-secondary small fw-medium mb-1">
+                <i class="bi bi-check-circle-fill me-1 text-success"></i> Active Categories
+            </div>
+            <div class="display-6 fw-bold text-success">{{ active_count }}</div>
+            <div class="text-muted small mt-1">With linked expenses</div>
+        </div>
+    </div>
+    <div class="col-12 col-sm-4">
+        <div class="glass-panel p-3 card-3d text-center">
+            <div class="text-secondary small fw-medium mb-1">
+                <i class="bi bi-trash3-fill me-1 text-warning"></i> Empty Categories
+            </div>
+            <div class="display-6 fw-bold text-warning">{{ empty_count }}</div>
+            <div class="text-muted small mt-1">0 expenses • Safe to delete</div>
+        </div>
+    </div>
+</div>
+
+<!-- Create Category & Filter Bar -->
+<div class="row g-3 mb-4 align-items-center">
+    <!-- Add Category Form -->
+    <div class="col-12 col-lg-7">
+        <div class="glass-panel p-3 card-3d">
+            <form method="POST" action="{% url 'category_create' %}" class="row g-2 align-items-center">
+                {% csrf_token %}
+                <div class="col-12 col-sm-8">
+                    <div class="input-group">
+                        <span class="input-group-text glass-input border-end-0">
+                            <i class="bi bi-tag text-cyan"></i>
+                        </span>
+                        <input type="text" name="name" class="form-control glass-input border-start-0 ps-0" placeholder="New category name (e.g. Shopping, Rent, Groceries)" required>
+                    </div>
+                </div>
+                <div class="col-12 col-sm-4">
+                    <button type="submit" class="btn-3d btn-primary-3d w-100 py-2">
+                        <i class="bi bi-plus-lg me-1"></i> Create Category
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Filter Toggle Pills -->
+    <div class="col-12 col-lg-5 d-flex justify-content-lg-end gap-2">
+        <a href="{% url 'categories' %}" class="btn-3d {% if current_filter != 'empty' %}btn-cyan-3d{% else %}btn-secondary-3d{% endif %} flex-grow-1 flex-lg-grow-0">
+            <i class="bi bi-grid-fill me-1"></i> All Categories ({{ total_categories }})
+        </a>
+        <a href="{% url 'categories' %}?filter=empty" class="btn-3d {% if current_filter == 'empty' %}btn-amber-3d{% else %}btn-secondary-3d{% endif %} flex-grow-1 flex-lg-grow-0">
+            <i class="bi bi-slash-circle me-1"></i> Empty Only ({{ empty_count }})
+        </a>
+    </div>
+</div>
+
+<!-- Categories Grid -->
+{% if categories %}
+<div class="row g-3">
+    {% for cat in categories %}
+    <div class="col-12 col-sm-6 col-lg-4">
+        <div class="glass-panel p-3 card-3d h-100 d-flex flex-column justify-content-between {% if cat.expense_count == 0 %}border-warning-subtle{% endif %}">
+            <div>
+                <div class="d-flex justify-content-between align-items-start mb-2">
+                    <div class="d-flex align-items-center gap-2">
+                        <div class="rounded-circle p-2 d-flex align-items-center justify-content-center" style="background: rgba(0, 240, 255, 0.1); width: 38px; height: 38px;">
+                            <i class="bi bi-tag-fill text-cyan"></i>
+                        </div>
+                        <div>
+                            <h2 class="h5 mb-0 fw-bold">{{ cat.name }}</h2>
+                            <small class="text-muted">Added on {{ cat.created_at|date:"d M Y" }}</small>
+                        </div>
+                    </div>
+
+                    {% if cat.expense_count == 0 %}
+                    <span class="badge bg-warning bg-opacity-25 text-warning border border-warning border-opacity-50 px-2 py-1">
+                        <i class="bi bi-trash3 me-1"></i> Empty
+                    </span>
+                    {% else %}
+                    <span class="badge bg-success bg-opacity-25 text-success border border-success border-opacity-50 px-2 py-1">
+                        <i class="bi bi-check-circle-fill me-1"></i> Active
+                    </span>
+                    {% endif %}
+                </div>
+
+                <div class="d-flex justify-content-between align-items-center my-3 py-2 px-3 rounded" style="background: rgba(255, 255, 255, 0.04);">
+                    <span class="text-secondary small">Transactions:</span>
+                    <span class="fw-bold {% if cat.expense_count == 0 %}text-warning{% else %}text-primary{% endif %}">
+                        {{ cat.expense_count }}
+                    </span>
+                </div>
+                <div class="d-flex justify-content-between align-items-center mb-3 px-3">
+                    <span class="text-secondary small">Total Spent:</span>
+                    <span class="font-monospace fw-bold text-gradient">
+                        ₹{{ cat.total_spent|default:"0.00"|floatformat:2 }}
+                    </span>
+                </div>
+            </div>
+
+            <!-- Action Area -->
+            <div class="mt-2 pt-2 border-top border-subtle">
+                {% if cat.expense_count == 0 %}
+                <form method="POST" action="{% url 'category_delete' cat.id %}" onsubmit="return confirm('Delete empty category &quot;{{ cat.name }}&quot;? This cannot be undone.');">
+                    {% csrf_token %}
+                    <button type="submit" class="btn-3d btn-danger-3d w-100 py-2">
+                        <i class="bi bi-trash3-fill me-1"></i> Delete Empty Category
+                    </button>
+                </form>
+                {% else %}
+                <a href="{% url 'expenses' %}?category={{ cat.id }}" class="btn-3d btn-secondary-3d w-100 py-2 text-center text-decoration-none">
+                    <i class="bi bi-eye-fill me-1"></i> View {{ cat.expense_count }} Expense{{ cat.expense_count|pluralize }}
+                </a>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<!-- Empty State -->
+<div class="glass-panel p-5 text-center card-3d my-4">
+    <div class="mb-3">
+        <i class="bi bi-tags display-1 text-muted"></i>
+    </div>
+    {% if current_filter == 'empty' %}
+    <h3 class="h4 fw-bold mb-2">No Empty Categories Found!</h3>
+    <p class="text-secondary mb-4">All your categories currently contain recorded expenses. Great job keeping your categories organized!</p>
+    <a href="{% url 'categories' %}" class="btn-3d btn-cyan-3d">
+        <i class="bi bi-grid-fill me-1"></i> View All Categories
+    </a>
+    {% else %}
+    <h3 class="h4 fw-bold mb-2">No Categories Yet</h3>
+    <p class="text-secondary mb-4">Create your first category above to start organizing your expenses.</p>
+    {% endif %}
+</div>
+{% endif %}
+{% endblock %}

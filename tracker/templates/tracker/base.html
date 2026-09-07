@@ -111,6 +111,9 @@
                 <a href="{% url 'expenses' %}" class="nav-link-custom {% if request.resolver_match.url_name == 'expenses' %}active{% endif %}">
                     <i class="bi bi-receipt me-1"></i> Expenses
                 </a>
+                <a href="{% url 'categories' %}" class="nav-link-custom {% if request.resolver_match.url_name == 'categories' %}active{% endif %}">
+                    <i class="bi bi-tags-fill me-1"></i> Categories
+                </a>
                 <a href="{% url 'expense_add' %}" class="btn-3d btn-primary-3d py-1 px-3">
                     <i class="bi bi-plus-lg"></i> Add
                 </a>
@@ -129,6 +132,9 @@
                 </a>
                 <a href="{% url 'expenses' %}" class="nav-link-custom {% if request.resolver_match.url_name == 'expenses' %}active{% endif %}">
                     <i class="bi bi-receipt me-2"></i> Expenses
+                </a>
+                <a href="{% url 'categories' %}" class="nav-link-custom {% if request.resolver_match.url_name == 'categories' %}active{% endif %}">
+                    <i class="bi bi-tags-fill me-2"></i> Categories
                 </a>
                 <a href="{% url 'expense_add' %}" class="nav-link-custom text-primary">
                     <i class="bi bi-plus-circle-fill me-2"></i> Add New Expense

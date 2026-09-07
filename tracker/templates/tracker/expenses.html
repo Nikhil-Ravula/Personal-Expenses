@@ -11,6 +11,9 @@
         <p class="text-secondary mb-0">Browse, filter, search, and export your expense history.</p>
     </div>
     <div class="d-flex align-items-center gap-2 flex-wrap">
+        <a href="{% url 'categories' %}" class="btn-3d btn-secondary-3d">
+            <i class="bi bi-tags-fill me-1"></i> Manage Categories
+        </a>
         <a href="{% url 'export_pdf' %}?q={{ query|urlencode }}&category={{ selected_category }}" class="btn-3d btn-cyan-3d">
             <i class="bi bi-file-earmark-pdf-fill"></i> Download Filtered PDF
         </a>
