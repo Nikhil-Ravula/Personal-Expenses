@@ -59,15 +59,15 @@
                             <i class="bi bi-telegram text-cyan me-2"></i>Telegram Bot Link
                         </h2>
                         {% if link.is_linked %}
-                            <span class="badge-3d badge-emerald"><i class="bi bi-link-45deg me-1"></i>Linked</span>
+                            <span class="badge-3d badge-emerald"><span class="status-dot"></span>Linked</span>
                         {% else %}
-                            <span class="badge-3d badge-amber"><i class="bi bi-exclamation-circle me-1"></i>Ready to Link</span>
+                            <span class="badge-3d badge-amber"><span class="status-dot"></span>Ready to Link</span>
                         {% endif %}
                     </div>
-                    <p class="text-secondary small mb-0">Live 3D connection node synced in real-time with your Telegram Bot.</p>
+                    <p class="text-secondary small mb-0">Live 3D orbital quantum satellite beacon synced with your Telegram Bot.</p>
                 </div>
                 <div class="col-12 col-sm-4 text-center text-sm-end">
-                    <div class="canvas-3d-container mx-auto" style="height: 130px; width: 130px;" title="3D WebGL Connection Beacon">
+                    <div class="canvas-3d-container mx-auto" style="height: 140px; width: 140px;" title="3D WebGL Connection Beacon">
                         <canvas id="profile-3d-beacon"></canvas>
                     </div>
                 </div>

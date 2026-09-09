@@ -37,6 +37,19 @@ logger = logging.getLogger(__name__)
 class Command(BaseCommand):
     help = 'Runs the Telegram Bot for Smart Expense Tracker'
 
+    def add_arguments(self, parser):
+        parser.add_argument(
+            '--no-proxy',
+            action='store_true',
+            help='Bypass proxy and connect directly (for paid PythonAnywhere accounts or local testing)',
+        )
+        parser.add_argument(
+            '--proxy',
+            type=str,
+            default=None,
+            help='Specify a custom proxy URL (e.g. http://proxy.server:3128)',
+        )
+
     def handle(self, *args, **options):
         token = getattr(settings, 'TELEGRAM_BOT_TOKEN', '').strip()
 
@@ -60,13 +73,42 @@ class Command(BaseCommand):
             return
 
         from tracker.bot.runner import build_bot_application
+        from telegram.error import NetworkError, Conflict
+        import time
+
+        no_proxy = options.get('no_proxy', False)
+        proxy_arg = options.get('proxy', None)
+        proxy_override = 'none' if no_proxy else proxy_arg
 
         self.stdout.write(self.style.SUCCESS("[+] Initializing Smart Expense Tracker Telegram Bot..."))
-        application = build_bot_application(token)
+        application = build_bot_application(token, proxy_override=proxy_override)
 
         self.stdout.write(self.style.SUCCESS("[*] Bot is active and polling for updates. Press Ctrl+C to stop.\n"))
-        try:
-            application.run_polling()
-        except KeyboardInterrupt:
-            self.stdout.write(self.style.NOTICE("\nStopping bot..."))
+
+        backoff = 3
+        while True:
+            try:
+                # bootstrap_retries=10 allows python-telegram-bot to retry initialization
+                # if PythonAnywhere proxy returns a transient 503 Service Unavailable
+                application.run_polling(
+                    bootstrap_retries=10,
+                    drop_pending_updates=False
+                )
+                break
+            except KeyboardInterrupt:
+                self.stdout.write(self.style.NOTICE("\nStopping bot..."))
+                break
+            except NetworkError as e:
+                self.stdout.write(self.style.WARNING(
+                    f"\n[!] Network or proxy issue: {e}\n"
+                    f"    (PythonAnywhere proxy might be temporarily busy: 503). Retrying in {backoff}s..."
+                ))
+                time.sleep(backoff)
+                backoff = min(backoff * 2, 30)
+            except Exception as e:
+                self.stdout.write(self.style.ERROR(
+                    f"\n[!] Unexpected error: {e}. Retrying in {backoff}s..."
+                ))
+                time.sleep(backoff)
+                backoff = min(backoff * 2, 30)
 

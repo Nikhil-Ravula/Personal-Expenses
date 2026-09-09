@@ -53,7 +53,7 @@ async def bot_error_handler(update: object, context) -> None:
             pass
 
 
-def build_bot_application(token: str, loop=None):
+def build_bot_application(token: str, loop=None, proxy_override=None):
     from telegram.ext import (
         ApplicationBuilder,
         CommandHandler,
@@ -82,16 +82,27 @@ def build_bot_application(token: str, loop=None):
     from tracker.bot.scheduler import setup_scheduler
     from telegram.request import HTTPXRequest
 
-    # Automatic proxy detection for PythonAnywhere free tier
-    proxy_url = os.environ.get('https_proxy') or os.environ.get('http_proxy') or getattr(settings, 'TELEGRAM_PROXY_URL', None)
-    if not proxy_url and ('PYTHONANYWHERE_DOMAIN' in os.environ or os.path.exists('/etc/pythonanywhere')):
-        proxy_url = 'http://proxy.server:3128'
+    # Resolve proxy configuration
+    if proxy_override is not None:
+        proxy_url = None if str(proxy_override).lower() in ('none', 'direct', 'false', '0') else str(proxy_override)
+    else:
+        proxy_url = os.environ.get('https_proxy') or os.environ.get('http_proxy') or getattr(settings, 'TELEGRAM_PROXY_URL', None)
+        if not proxy_url and ('PYTHONANYWHERE_DOMAIN' in os.environ or os.path.exists('/etc/pythonanywhere')):
+            proxy_url = 'http://proxy.server:3128'
 
-    if proxy_url:
+    if proxy_url and str(proxy_url).lower() not in ('none', 'direct', 'false', '0', ''):
         logger.info(f"[Telegram Bot] Using outbound proxy: {proxy_url}")
-        request = HTTPXRequest(proxy=proxy_url)
+        # High timeouts prevent premature 503 drops through busy shared proxies
+        request = HTTPXRequest(
+            proxy=proxy_url,
+            connect_timeout=30.0,
+            read_timeout=30.0,
+            write_timeout=30.0,
+            pool_timeout=15.0
+        )
         builder = ApplicationBuilder().token(token).request(request)
     else:
+        logger.info("[Telegram Bot] Connecting directly (no proxy).")
         builder = ApplicationBuilder().token(token)
 
     application = builder.build()
@@ -150,8 +161,9 @@ def start_bot_background():
 
     def _worker():
         import time
-        from telegram.error import Conflict
+        from telegram.error import Conflict, NetworkError
         time.sleep(1.0)
+        backoff = 3
         while True:
             try:
                 loop = asyncio.new_event_loop()
@@ -159,14 +171,19 @@ def start_bot_background():
                 application = build_bot_application(token, loop=loop)
                 logger.info("[Telegram Bot] Auto-started in background thread with runserver.")
                 print("\n[+] Smart Expense Tracker Telegram Bot auto-started with server!\n")
-                application.run_polling(stop_signals=None, close_loop=False)
+                application.run_polling(bootstrap_retries=10, stop_signals=None, close_loop=False)
                 break
             except Conflict:
                 logger.warning("[Telegram Bot] Conflict encountered, waiting 3s before retry...")
                 time.sleep(3)
+            except NetworkError as e:
+                logger.warning(f"[Telegram Bot] Network or proxy error ({e}). Retrying in {backoff}s...")
+                time.sleep(backoff)
+                backoff = min(backoff * 2, 30)
             except Exception as e:
                 logger.error(f"[Telegram Bot Error]: {e}")
-                time.sleep(4)
+                time.sleep(backoff)
+                backoff = min(backoff * 2, 30)
 
     _bot_thread = threading.Thread(target=_worker, name="TelegramBotThread", daemon=True)
     _bot_thread.start()

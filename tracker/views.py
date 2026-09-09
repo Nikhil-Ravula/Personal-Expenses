@@ -73,6 +73,13 @@ def dashboard_view(request):
     # 5. Total Transactions this Month
     transaction_count = Expense.objects.filter(user=user, date__year=year, date__month=month).count()
 
+    # 6. Real-World Financial Velocity & Safe Daily Spend Metrics
+    import calendar
+    _, days_in_month = calendar.monthrange(year, month)
+    days_left = max(days_in_month - today.day + 1, 1)
+    daily_avg_spent = round(status['total_spent'] / max(today.day, 1), 2)
+    daily_safe_spend = round(status['remaining'] / days_left, 2) if status['has_budget'] and status['remaining'] > 0 else Decimal('0.00')
+
     context = {
         'status': status,
         'cat_labels_json': json.dumps(cat_labels),
@@ -83,6 +90,11 @@ def dashboard_view(request):
         'recent_expenses': recent_expenses,
         'transaction_count': transaction_count,
         'current_month_name': today.strftime("%B %Y"),
+        'days_in_month': days_in_month,
+        'day_of_month': today.day,
+        'days_left': days_left,
+        'daily_avg_spent': daily_avg_spent,
+        'daily_safe_spend': daily_safe_spend,
     }
     return render(request, 'tracker/dashboard.html', context)
 

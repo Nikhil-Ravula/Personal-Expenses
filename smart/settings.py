@@ -27,6 +27,7 @@ ALLOWED_HOSTS = ['*'] if DEBUG else config('ALLOWED_HOSTS', default='localhost,1
 # Telegram Bot Token & Username
 TELEGRAM_BOT_TOKEN = config('TELEGRAM_BOT_TOKEN', default=config('TELEGRAM_BOT_API', default='your_api'))
 TELEGRAM_BOT_USERNAME = config('TELEGRAM_BOT_USERNAME', default='samrt_personal_tracker_bot')
+TELEGRAM_PROXY_URL = config('TELEGRAM_PROXY_URL', default='')
 
 
 # Application definition

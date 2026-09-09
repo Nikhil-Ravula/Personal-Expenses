@@ -26,23 +26,52 @@
     </div>
 </div>
 
-<!-- 3D Interactive Hero Showcase -->
+<!-- 3D Interactive Hero Showcase with Live Financial Pulse -->
 <div class="showcase-3d p-4 mb-4">
-    <div class="row align-items-center g-3">
-        <div class="col-12 col-md-7">
-            <span class="badge-3d badge-cyan mb-2"><i class="bi bi-badge-3d-fill me-1"></i> Interactive 3D Financial Core</span>
+    <div class="row align-items-center g-4">
+        <div class="col-12 col-lg-7">
+            <div class="d-flex align-items-center gap-2 mb-2 flex-wrap">
+                <span class="badge-3d badge-cyan"><i class="bi bi-gem me-1"></i> Interactive Wealth Gyroscope</span>
+                <span class="badge-3d {% if status.is_over %}badge-rose{% elif status.percent_spent >= 80 %}badge-amber{% else %}badge-emerald{% endif %}">
+                    <span class="status-dot"></span>
+                    {% if status.is_over %}Limit Exceeded{% elif status.percent_spent >= 80 %}Caution (80%+){% else %}Optimal Health{% endif %}
+                </span>
+            </div>
             <h2 class="h3 mb-2 text-gradient">Smart Financial Nexus</h2>
             <p class="text-secondary small mb-3">
-                Live WebGL 3D core reflecting your real-time budget status. Click & drag to rotate in 3D space. Synced seamlessly between web and Telegram Bot.
+                Live WebGL 3D wealth gyroscope reacting in real-time to your monthly budget velocity. Drag to inspect facets and orbital rings.
             </p>
+
+            <!-- Real-World Financial Velocity Metrics -->
+            <div class="p-3 rounded-3 mb-3" style="background: rgba(255, 255, 255, 0.04); border: 1px solid var(--border-subtle);">
+                <div class="row g-3 text-center text-sm-start">
+                    <div class="col-4 border-end" style="border-color: var(--border-subtle) !important;">
+                        <span class="text-secondary small d-block mb-1">Daily Average</span>
+                        <span class="fw-bold fs-6">₹{{ daily_avg_spent|floatformat:2 }}</span>
+                    </div>
+                    <div class="col-4 border-end" style="border-color: var(--border-subtle) !important;">
+                        <span class="text-secondary small d-block mb-1">Safe Daily Spend</span>
+                        <span class="fw-bold fs-6 {% if status.is_over %}text-danger{% else %}text-success{% endif %}">
+                            {% if status.has_budget and status.remaining > 0 %}
+                                ₹{{ daily_safe_spend|floatformat:2 }}
+                            {% else %}
+                                ₹0.00
+                            {% endif %}
+                        </span>
+                    </div>
+                    <div class="col-4">
+                        <span class="text-secondary small d-block mb-1">Month Velocity</span>
+                        <span class="fw-bold fs-6 text-cyan">Day {{ day_of_month }} <span class="text-secondary fw-normal small">/ {{ days_in_month }}</span></span>
+                    </div>
+                </div>
+            </div>
+
             <div class="d-flex gap-2 flex-wrap">
-                <span class="badge-3d {% if status.is_over %}badge-rose{% elif status.percent_spent >= 80 %}badge-amber{% else %}badge-emerald{% endif %}">
-                    Core Status: {% if status.is_over %}Limit Exceeded{% elif status.percent_spent >= 80 %}Caution (80%+){% else %}Optimal Health{% endif %}
-                </span>
-                <span class="badge-3d badge-indigo"><i class="bi bi-arrows-move me-1"></i> Drag to Rotate</span>
+                <span class="badge-3d badge-indigo"><i class="bi bi-arrows-move me-1"></i> Interactive Inertial 3D Drag</span>
+                <span class="badge-3d badge-cyan"><i class="bi bi-clock-history me-1"></i> {{ days_left }} Day{{ days_left|pluralize }} Remaining</span>
             </div>
         </div>
-        <div class="col-12 col-md-5">
+        <div class="col-12 col-lg-5 text-center">
             <div class="canvas-3d-container" title="Click & Drag to rotate in 3D">
                 <canvas id="dashboard-3d-core"></canvas>
             </div>
@@ -89,7 +118,7 @@
                     </div>
                     <div class="d-flex justify-content-between text-muted small mt-1">
                         <span>Spent: {{ status.percent_spent }}%</span>
-                        <span>{% if status.is_over %}<span class="text-danger">Over budget!</span>{% endif %}</span>
+                        <span>{% if status.is_over %}<span class="text-danger fw-semibold">Over budget!</span>{% endif %}</span>
                     </div>
                 </div>
             </div>
@@ -114,11 +143,11 @@
                 <div class="mt-2">
                     {% if status.has_budget %}
                         {% if status.is_over %}
-                            <span class="badge-3d badge-rose">Limit Exceeded</span>
+                            <span class="badge-3d badge-rose"><span class="status-dot"></span>Limit Exceeded</span>
                         {% elif status.percent_spent >= 80 %}
-                            <span class="badge-3d badge-amber">80% Limit Alert</span>
+                            <span class="badge-3d badge-amber"><span class="status-dot"></span>80% Limit Alert</span>
                         {% else %}
-                            <span class="badge-3d badge-emerald">On Track</span>
+                            <span class="badge-3d badge-emerald"><span class="status-dot"></span>On Track</span>
                         {% endif %}
                     {% else %}
                         <a href="#" data-bs-toggle="modal" data-bs-target="#budgetModal" class="small text-cyan">Click to set budget</a>
@@ -132,7 +161,7 @@
     <div class="col-12 col-sm-6 col-xl-3">
         <div class="card-3d">
             <div class="card-3d-content">
-                <div class="stat-icon indigo">
+                <div class="stat-icon amber">
                     <i class="bi bi-tag-fill"></i>
                 </div>
                 <div class="text-secondary small fw-medium mb-1">TOP SPENDING CATEGORY</div>
@@ -159,11 +188,19 @@
         </div>
     </div>
 
-    <!-- Category Breakdown Chart -->
+    <!-- Category Breakdown Chart with Interactive View Switcher -->
     <div class="col-12 col-lg-5">
         <div class="glass-panel p-4 h-100">
             <div class="d-flex justify-content-between align-items-center mb-3">
                 <h2 class="h5 mb-0"><i class="bi bi-pie-chart-fill text-indigo me-2"></i>Category Breakdown</h2>
+                <div class="chart-toggle-group">
+                    <button type="button" id="chart-view-doughnut" class="chart-toggle-btn active" title="Doughnut View">
+                        <i class="bi bi-pie-chart-fill"></i>
+                    </button>
+                    <button type="button" id="chart-view-bar" class="chart-toggle-btn" title="Bar Breakdown">
+                        <i class="bi bi-bar-chart-fill"></i>
+                    </button>
+                </div>
             </div>
             <div style="position: relative; height: 280px; width: 100%; display: flex; align-items: center; justify-content: center;">
                 <canvas id="categoryChart"></canvas>
@@ -195,10 +232,16 @@
             </thead>
             <tbody>
                 {% for expense in recent_expenses %}
-                <tr>
-                    <td>{{ expense.date|date:"d M Y" }}</td>
+                <tr class="receipt-row">
                     <td>
-                        <span class="badge-3d badge-indigo">{{ expense.category.name }}</span>
+                        <i class="bi bi-calendar3 text-muted me-1 small"></i>
+                        {{ expense.date|date:"d M Y" }}
+                    </td>
+                    <td>
+                        <span class="receipt-pill">
+                            <i class="bi bi-tag-fill text-cyan"></i>
+                            {{ expense.category.name }}
+                        </span>
                     </td>
                     <td class="fw-medium">{{ expense.type }}</td>
                     <td>
@@ -290,25 +333,25 @@
         const isDark = (document.documentElement.getAttribute('data-theme') || 'dark') === 'dark';
         return {
             textColor: isDark ? '#94a3b8' : '#475569',
-            gridColor: isDark ? 'rgba(0, 240, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)',
-            tooltipBg: isDark ? 'rgba(11, 18, 33, 0.96)' : 'rgba(255, 255, 255, 0.95)',
-            tooltipTitle: isDark ? '#00f0ff' : '#0f172a',
-            tooltipBorder: isDark ? 'rgba(0, 240, 255, 0.35)' : 'rgba(0, 0, 0, 0.1)',
-            doughnutBorder: isDark ? '#030712' : '#ffffff'
+            gridColor: isDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)',
+            tooltipBg: isDark ? 'rgba(11, 17, 30, 0.96)' : 'rgba(255, 255, 255, 0.96)',
+            tooltipTitle: isDark ? '#38bdf8' : '#0f172a',
+            tooltipBorder: isDark ? 'rgba(56, 189, 248, 0.3)' : 'rgba(0, 0, 0, 0.1)',
+            doughnutBorder: isDark ? '#0c1220' : '#ffffff'
         };
     }
 
     const themeColors = getChartThemeColors();
 
-    // 1. Neon Trend Line Chart
+    // 1. Spending Trend Line Chart
     const trendCtx = document.getElementById('trendChart').getContext('2d');
     const trendLabels = {{ trend_labels_json|safe }};
     const trendData = {{ trend_data_json|safe }};
 
     const gradient = trendCtx.createLinearGradient(0, 0, 0, 280);
-    gradient.addColorStop(0, 'rgba(0, 240, 255, 0.45)');
-    gradient.addColorStop(0.5, 'rgba(168, 85, 247, 0.18)');
-    gradient.addColorStop(1, 'rgba(0, 240, 255, 0.0)');
+    gradient.addColorStop(0, 'rgba(56, 189, 248, 0.35)');
+    gradient.addColorStop(0.5, 'rgba(99, 102, 241, 0.12)');
+    gradient.addColorStop(1, 'rgba(56, 189, 248, 0.0)');
 
     window.trendChart = new Chart(trendCtx, {
         type: 'line',
@@ -317,14 +360,14 @@
             datasets: [{
                 label: 'Spending (₹)',
                 data: trendData,
-                borderColor: '#00f0ff',
-                borderWidth: 3,
+                borderColor: '#38bdf8',
+                borderWidth: 2.5,
                 backgroundColor: gradient,
                 fill: true,
                 tension: 0.35,
-                pointBackgroundColor: '#ff007f',
-                pointBorderColor: '#00f0ff',
-                pointHoverRadius: 7,
+                pointBackgroundColor: '#6366f1',
+                pointBorderColor: '#ffffff',
+                pointHoverRadius: 6,
             }]
         },
         options: {
@@ -335,7 +378,7 @@
                 tooltip: {
                     backgroundColor: themeColors.tooltipBg,
                     titleColor: themeColors.tooltipTitle,
-                    bodyColor: '#00f0ff',
+                    bodyColor: '#f8fafc',
                     padding: 12,
                     borderColor: themeColors.tooltipBorder,
                     borderWidth: 1,
@@ -362,10 +405,14 @@
         }
     });
 
-    // 2. Neon Category Doughnut Chart
+    // 2. Category Breakdown Chart (Doughnut / Bar switcher)
     const catCtx = document.getElementById('categoryChart').getContext('2d');
     const catLabels = {{ cat_labels_json|safe }};
     const catData = {{ cat_data_json|safe }};
+
+    const categoryPalette = [
+        '#38bdf8', '#818cf8', '#34d399', '#f59e0b', '#f43f5e', '#a78bfa', '#2dd4bf'
+    ];
 
     if (catData.length > 0) {
         window.categoryChart = new Chart(catCtx, {
@@ -374,12 +421,10 @@
                 labels: catLabels,
                 datasets: [{
                     data: catData,
-                    backgroundColor: [
-                        '#00f0ff', '#a855f7', '#ff007f', '#00ff9d', '#ffb703', '#38bdf8', '#ec4899'
-                    ],
+                    backgroundColor: categoryPalette,
                     borderWidth: 2,
                     borderColor: themeColors.doughnutBorder,
-                    hoverOffset: 7
+                    hoverOffset: 6
                 }]
             },
             options: {
@@ -406,6 +451,96 @@
                 cutout: '65%'
             }
         });
+
+        // Switcher function between Doughnut and Horizontal Bar
+        window.switchCategoryChartView = function(viewType) {
+            if (!window.categoryChart) return;
+            window.categoryChart.destroy();
+
+            const c = getChartThemeColors();
+            if (viewType === 'bar') {
+                window.categoryChart = new Chart(catCtx, {
+                    type: 'bar',
+                    data: {
+                        labels: catLabels,
+                        datasets: [{
+                            label: 'Spent (₹)',
+                            data: catData,
+                            backgroundColor: categoryPalette,
+                            borderRadius: 6
+                        }]
+                    },
+                    options: {
+                        indexAxis: 'y',
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: { display: false },
+                            tooltip: {
+                                backgroundColor: c.tooltipBg,
+                                titleColor: c.tooltipTitle,
+                                borderColor: c.tooltipBorder,
+                                borderWidth: 1,
+                                callbacks: {
+                                    label: function(context) {
+                                        return '₹ ' + context.parsed.x.toLocaleString('en-IN', { minimumFractionDigits: 2 });
+                                    }
+                                }
+                            }
+                        },
+                        scales: {
+                            x: {
+                                grid: { color: c.gridColor },
+                                ticks: {
+                                    color: c.textColor,
+                                    callback: function(v) { return '₹' + v; }
+                                }
+                            },
+                            y: {
+                                grid: { display: false },
+                                ticks: { color: c.textColor }
+                            }
+                        }
+                    }
+                });
+            } else {
+                window.categoryChart = new Chart(catCtx, {
+                    type: 'doughnut',
+                    data: {
+                        labels: catLabels,
+                        datasets: [{
+                            data: catData,
+                            backgroundColor: categoryPalette,
+                            borderWidth: 2,
+                            borderColor: c.doughnutBorder,
+                            hoverOffset: 6
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: {
+                                position: 'right',
+                                labels: { color: c.textColor, font: { family: 'Inter', size: 11 } }
+                            },
+                            tooltip: {
+                                backgroundColor: c.tooltipBg,
+                                titleColor: c.tooltipTitle,
+                                borderColor: c.tooltipBorder,
+                                borderWidth: 1,
+                                callbacks: {
+                                    label: function(context) {
+                                        return context.label + ': ₹' + context.parsed.toLocaleString('en-IN', { minimumFractionDigits: 2 });
+                                    }
+                                }
+                            }
+                        },
+                        cutout: '65%'
+                    }
+                });
+            }
+        };
     } else {
         catCtx.font = '14px Inter';
         catCtx.fillStyle = '#64748b';
@@ -427,13 +562,23 @@
             window.trendChart.update();
         }
         if (window.categoryChart) {
-            window.categoryChart.options.plugins.legend.labels.color = c.textColor;
+            if (window.categoryChart.config.type === 'doughnut') {
+                window.categoryChart.options.plugins.legend.labels.color = c.textColor;
+                if (window.categoryChart.data.datasets[0]) {
+                    window.categoryChart.data.datasets[0].borderColor = c.doughnutBorder;
+                }
+            } else if (window.categoryChart.options.scales) {
+                if (window.categoryChart.options.scales.x) {
+                    window.categoryChart.options.scales.x.grid.color = c.gridColor;
+                    window.categoryChart.options.scales.x.ticks.color = c.textColor;
+                }
+                if (window.categoryChart.options.scales.y) {
+                    window.categoryChart.options.scales.y.ticks.color = c.textColor;
+                }
+            }
             window.categoryChart.options.plugins.tooltip.backgroundColor = c.tooltipBg;
             window.categoryChart.options.plugins.tooltip.titleColor = c.tooltipTitle;
             window.categoryChart.options.plugins.tooltip.borderColor = c.tooltipBorder;
-            if (window.categoryChart.data.datasets[0]) {
-                window.categoryChart.data.datasets[0].borderColor = c.doughnutBorder;
-            }
             window.categoryChart.update();
         }
     };
@@ -442,4 +587,3 @@
     initDashboard3DCore('dashboard-3d-core', {{ status.is_over|yesno:"true,false" }}, {{ status.percent_spent|default:0 }});
 </script>
 {% endblock %}
-
