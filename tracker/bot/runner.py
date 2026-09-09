@@ -187,3 +187,24 @@ def start_bot_background():
 
     _bot_thread = threading.Thread(target=_worker, name="TelegramBotThread", daemon=True)
     _bot_thread.start()
+
+
+_bot_app_instance = None
+
+
+async def get_or_create_bot_app():
+    """
+    Get or lazily initialize the shared Bot Application instance
+    for processing incoming Webhook updates.
+    """
+    global _bot_app_instance
+    if _bot_app_instance is None:
+        token = getattr(settings, 'TELEGRAM_BOT_TOKEN', '').strip()
+        if not token or token == 'your_api' or 'your_token' in token.lower():
+            logger.warning("[Telegram Webhook] Bot token not configured in .env.")
+            return None
+        app = build_bot_application(token)
+        await app.initialize()
+        _bot_app_instance = app
+    return _bot_app_instance
+

@@ -11,6 +11,10 @@ from django.utils import timezone
 from django.db.models import Sum, Count
 from django.core.paginator import Paginator
 from django.conf import settings
+from django.views.decorators.csrf import csrf_exempt
+import logging
+
+logger = logging.getLogger(__name__)
 
 from .models import Expense, Category, Budget, TelegramLink
 from .forms import ExpenseForm, RegisterForm
@@ -477,3 +481,28 @@ def category_delete_view(request, pk):
             category.delete()
             messages.success(request, f"Empty category '{cat_name}' deleted successfully.")
     return redirect('categories')
+
+
+@csrf_exempt
+async def telegram_webhook_view(request):
+    """
+    Handle incoming Telegram Webhook updates.
+    Allows the Telegram bot to run 24/7 automatically on PythonAnywhere
+    without needing background tasks or polling commands.
+    """
+    if request.method == 'POST':
+        try:
+            data = json.loads(request.body.decode('utf-8'))
+            from tracker.bot.runner import get_or_create_bot_app
+            from telegram import Update
+
+            app = await get_or_create_bot_app()
+            if app:
+                update = Update.de_json(data, app.bot)
+                await app.process_update(update)
+        except Exception as e:
+            logger.error(f"[Telegram Webhook Error]: {e}")
+        return HttpResponse("OK")
+
+    return HttpResponse("Smart Expense Tracker Telegram Webhook Endpoint. Send POST updates here.")
+

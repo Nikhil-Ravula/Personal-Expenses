@@ -288,3 +288,23 @@ class TelegramBotPaginationTests(TestCase):
         self.assertIn("31.", text2)
         self.assertIn("showpage_1", str(kb2))
 
+    async def test_telegram_webhook_get_and_post(self):
+        import json
+        from django.test import AsyncClient
+        client = AsyncClient()
+
+        # GET request returns webhook status info
+        resp_get = await client.get('/telegram/webhook/')
+        self.assertEqual(resp_get.status_code, 200)
+        self.assertIn(b"Telegram Webhook Endpoint", resp_get.content)
+
+        # POST request with mock payload returns 200 OK
+        resp_post = await client.post(
+            '/telegram/webhook/',
+            data=json.dumps({"update_id": 9999}),
+            content_type='application/json'
+        )
+        self.assertEqual(resp_post.status_code, 200)
+        self.assertEqual(resp_post.content, b"OK")
+
+

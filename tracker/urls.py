@@ -10,6 +10,7 @@ urlpatterns = [
     path('export/pdf/', views.export_pdf_view, name='export_pdf'),
     path('profile/', views.profile_view, name='profile'),
     path('telegram/', views.telegram_redirect_view, name='telegram_redirect'),
+    path('telegram/webhook/', views.telegram_webhook_view, name='telegram_webhook'),
     path('budget/set/', views.set_budget_view, name='set_budget'),
     path('categories/', views.categories_view, name='categories'),
     path('categories/create/', views.category_create_view, name='category_create'),
