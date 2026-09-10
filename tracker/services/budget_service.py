@@ -82,9 +82,9 @@ def check_budget_thresholds_after_expense(user, expense_date=None):
             budget.save(update_fields=['notified_100', 'notified_80'])
             over_amount = spent - limit
             alerts.append(
-                f"🚨 **Budget Limit Exceeded!**\n"
-                f"You have spent **₹{spent:,.2f}** of your **₹{limit:,.2f}** limit for {date_val.strftime('%B %Y')}.\n"
-                f"You are over budget by **₹{over_amount:,.2f}**."
+                f"🚨 <b>Budget Limit Exceeded!</b>\n"
+                f"You have spent <code>₹{spent:,.2f}</code> of your <code>₹{limit:,.2f}</code> limit for {date_val.strftime('%B %Y')}.\n"
+                f"You are over budget by <code>₹{over_amount:,.2f}</code>."
             )
     # 80% threshold
     elif spent >= (limit * Decimal('0.80')):
@@ -92,9 +92,9 @@ def check_budget_thresholds_after_expense(user, expense_date=None):
             budget.notified_80 = True
             budget.save(update_fields=['notified_80'])
             alerts.append(
-                f"⚠️ **Budget Alert (80% Reached)**\n"
-                f"You have spent **₹{spent:,.2f}** (80%+) of your **₹{limit:,.2f}** monthly budget for {date_val.strftime('%B %Y')}.\n"
-                f"Remaining budget: **₹{status['remaining']:,.2f}**."
+                f"⚠️ <b>Budget Alert (80% Reached)</b>\n"
+                f"You have spent <code>₹{spent:,.2f}</code> (80%+) of your <code>₹{limit:,.2f}</code> monthly budget for {date_val.strftime('%B %Y')}.\n"
+                f"Remaining budget: <code>₹{status['remaining']:,.2f}</code>."
             )
 
     return alerts

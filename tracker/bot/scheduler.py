@@ -9,7 +9,7 @@ from apscheduler.triggers.cron import CronTrigger
 from tracker.models import TelegramLink, TelegramSession, Budget, Expense
 from tracker.services.budget_service import get_budget_status
 from tracker.services.pdf_generator import generate_expense_pdf
-from tracker.bot.handlers import escape_md
+from tracker.bot.handlers import escape_html, strip_html
 
 
 @sync_to_async
@@ -55,16 +55,17 @@ async def prompt_monthly_budgets_job(application):
             needs_prompt = await check_user_needs_budget_prompt(link.user, now.month, now.year)
             if needs_prompt:
                 await set_session_budget_prompt(link.chat_id)
-                uname_esc = escape_md(link.user.username)
+                uname_esc = escape_html(link.user.username)
                 msg = (
-                    f"👋 Good morning, *{uname_esc}*!\n\n"
-                    f"A new month (*{now.strftime('%B %Y')}*) has begun. 🎯\n"
-                    "Reply to this message with a number (e.g. `5000`) to set your budget limit for this month, or use `/budget <amount>`."
+                    f"👋 Good morning, <b>{uname_esc}</b>!\n\n"
+                    f"A new month (<b>{now.strftime('%B %Y')}</b>) has begun. 🎯\n"
+                    "Reply to this message with a number (e.g. <code>5000</code>) to set your budget limit for this month, or use <code>/budget &lt;amount&gt;</code>."
                 )
                 try:
-                    await application.bot.send_message(chat_id=link.chat_id, text=msg, parse_mode='Markdown')
+                    await application.bot.send_message(chat_id=link.chat_id, text=msg, parse_mode='HTML')
                 except Exception:
-                    await application.bot.send_message(chat_id=link.chat_id, text=msg, parse_mode=None)
+                    clean_msg = strip_html(msg)
+                    await application.bot.send_message(chat_id=link.chat_id, text=clean_msg, parse_mode=None)
         except Exception as e:
             print(f"Error prompting budget for chat {link.chat_id}: {e}")
 
@@ -84,17 +85,18 @@ async def end_of_month_report_job(application):
         try:
             status, expenses, pdf_bytes, filename = await get_monthly_report_data(link.user, now.month, now.year)
             report_msg = (
-                f"📈 *End of Month Report • {now.strftime('%B %Y')}*\n\n"
-                f"• *Total Spent:* ₹{status['total_spent']:,.2f}\n"
-                f"• *Budget Limit:* ₹{status['budget_amount']:,.2f}\n"
-                f"• *Remaining:* ₹{status['remaining']:,.2f}\n"
-                f"• *Total Transactions:* {len(expenses)}\n\n"
+                f"📈 <b>End of Month Report • {now.strftime('%B %Y')}</b>\n\n"
+                f"• <b>Total Spent:</b> <code>₹{status['total_spent']:,.2f}</code>\n"
+                f"• <b>Budget Limit:</b> <code>₹{status['budget_amount']:,.2f}</code>\n"
+                f"• <b>Remaining:</b> <code>₹{status['remaining']:,.2f}</code>\n"
+                f"• <b>Total Transactions:</b> {len(expenses)}\n\n"
                 f"📄 Detailed PDF report attached below!"
             )
             try:
-                await application.bot.send_message(chat_id=link.chat_id, text=report_msg, parse_mode='Markdown')
+                await application.bot.send_message(chat_id=link.chat_id, text=report_msg, parse_mode='HTML')
             except Exception:
-                await application.bot.send_message(chat_id=link.chat_id, text=report_msg, parse_mode=None)
+                clean_report_msg = strip_html(report_msg)
+                await application.bot.send_message(chat_id=link.chat_id, text=clean_report_msg, parse_mode=None)
             await application.bot.send_document(
                 chat_id=link.chat_id,
                 document=BytesIO(pdf_bytes),

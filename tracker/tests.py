@@ -232,15 +232,24 @@ class TelegramBotCategoryTests(TestCase):
         self.assertEqual(name_empty, 'Daily_items')
 
 
-class TelegramBotMarkdownTests(TestCase):
-    def test_escape_md_helper(self):
-        from tracker.bot.handlers import escape_md
-        # Test escaping underscores which previously broke Telegram Markdown v1
-        self.assertEqual(escape_md("daily_items"), r"daily\_items")
-        self.assertEqual(escape_md("room_rent"), r"room\_rent")
-        self.assertEqual(escape_md("Scope: Category: Daily_items"), r"Scope: Category: Daily\_items")
-        self.assertEqual(escape_md("Item *with* [brackets] and `code`"), r"Item \*with\* \[brackets] and \`code\`")
-        self.assertEqual(escape_md(None), "")
+class TelegramBotHtmlFormatTests(TestCase):
+    def test_escape_html_helper(self):
+        from tracker.bot.handlers import escape_html, escape_md, strip_html
+        # In HTML mode, underscores remain natural and clean without breaking parser
+        self.assertEqual(escape_html("daily_items"), "daily_items")
+        self.assertEqual(escape_html("dharani_gita"), "dharani_gita")
+        # HTML special chars are safely escaped
+        self.assertEqual(escape_html("<script>alert('test')</script>"), "&lt;script&gt;alert('test')&lt;/script&gt;")
+        self.assertEqual(escape_html("Tom & Jerry"), "Tom &amp; Jerry")
+        self.assertEqual(escape_html(None), "")
+        # Backward-compatibility alias
+        self.assertEqual(escape_md("<test>"), "&lt;test&gt;")
+
+    def test_strip_html_helper(self):
+        from tracker.bot.handlers import strip_html
+        self.assertEqual(strip_html("<b>Bold</b> and <code>code</code>"), "Bold and code")
+        self.assertEqual(strip_html("No tags"), "No tags")
+        self.assertEqual(strip_html(None), "")
 
 
 class TelegramBotPaginationTests(TestCase):
