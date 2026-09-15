@@ -1,28 +1,63 @@
-# Environment
-.env.*
+# ── Environment ──────────────────────────────────────────
 .env
+.env.*
+!.env.example
+
+# ── Virtual Environments ─────────────────────────────────
 .venv/
 env/
 venv/
 
-# Database
+# ── Database ─────────────────────────────────────────────
 db.sqlite3
 db.sqlite3-journal
 
-# Python
+# ── Python ───────────────────────────────────────────────
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
 
-# Static & Media
-media/
+# ── Django ───────────────────────────────────────────────
 staticfiles/
+media/
+*.log
 
-# IDE
+# ── Node / JavaScript ────────────────────────────────────
+node_modules/
+package.json
+package-lock.json
+npm-debug.log*
+yarn-error.log*
+.npm/
+
+# ── Project-specific ignores ─────────────────────────────
+.agents/
+prompt.md
+
+# ── IDE & Editors ────────────────────────────────────────
 .idea/
 .vscode/
 *.swp
 *.swo
+*.DS_Store
+Thumbs.db
 
-*.md
+# ── OS ───────────────────────────────────────────────────
+.DS_Store
+ehthumbs.db
+Desktop.ini
+
+# ── Coverage / Testing ───────────────────────────────────
+.coverage
+htmlcov/
+.pytest_cache/
+
+# ── Misc ─────────────────────────────────────────────────
+*.pyc
+*.pyo

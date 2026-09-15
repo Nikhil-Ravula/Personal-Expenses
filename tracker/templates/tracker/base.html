@@ -183,5 +183,104 @@
     <!-- Custom JS with cache busting -->
     <script src="{% static 'js/main.js' %}?v={% now 'U' %}"></script>
     {% block scripts %}{% endblock %}
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         GLOBAL SPRING-PHYSICS: applied to all pages via base.html
+         Uses @motionone/dom ESM — zero React, zero build step
+         ═══════════════════════════════════════════════════════════════ -->
+    <script type="module">
+    import { animate, spring, stagger } from 'https://cdn.jsdelivr.net/npm/@motionone/dom@10.16.4/+esm';
+
+    /* ── Spring presets ─────────────────────────────────── */
+    const spHover  = spring({ stiffness: 380, damping: 18, mass: 0.85 });
+    const spOut    = spring({ stiffness: 300, damping: 22, mass: 0.85 });
+    const spTap    = spring({ stiffness: 520, damping: 26, mass: 0.75 });
+    const spEntrance = spring({ stiffness: 220, damping: 24 });
+
+    /* ── Helper: attach spring hover+tap to a button element ── */
+    function springify(el, hoverScale = 1.07, tapScale = 0.94) {
+        el.style.willChange = 'transform';
+        el.addEventListener('mouseenter', () =>
+            animate(el, { scale: hoverScale, y: -2 }, { easing: spHover }));
+        el.addEventListener('mouseleave', () =>
+            animate(el, { scale: 1, y: 0 }, { easing: spOut }));
+        el.addEventListener('mousedown', () =>
+            animate(el, { scale: tapScale, y: 1 }, { easing: spTap }));
+        el.addEventListener('mouseup', () =>
+            animate(el, { scale: hoverScale * 0.98, y: -1 }, { easing: spHover }));
+        el.addEventListener('mouseleave', () =>
+            animate(el, { scale: 1, y: 0 }, { easing: spOut }));
+        el.addEventListener('touchstart', () =>
+            animate(el, { scale: tapScale }, { easing: spTap }), { passive: true });
+        el.addEventListener('touchend', () =>
+            animate(el, { scale: 1 }, { easing: spOut }));
+    }
+
+    function init() {
+        /* 1. All primary .btn-3d buttons — bold spring */
+        document.querySelectorAll('.btn-3d').forEach(el => springify(el, 1.07, 0.93));
+
+        /* 2. Hero spring buttons (dashboard-specific, no-op on other pages) */
+        document.querySelectorAll('.spring-btn').forEach(el => springify(el, 1.08, 0.92));
+
+        /* 3. Nav brand logo — subtle lift */
+        const brand = document.querySelector('.nav-brand');
+        if (brand) springify(brand, 1.04, 0.97);
+
+        /* 4. Theme toggle — spin + scale */
+        const themeBtn = document.getElementById('theme-toggle-btn');
+        if (themeBtn) {
+            themeBtn.addEventListener('mouseenter', () =>
+                animate(themeBtn, { scale: 1.15, rotate: 20 }, { easing: spHover }));
+            themeBtn.addEventListener('mouseleave', () =>
+                animate(themeBtn, { scale: 1, rotate: 0 }, { easing: spOut }));
+            themeBtn.addEventListener('mousedown', () =>
+                animate(themeBtn, { scale: 0.88, rotate: -15 }, { easing: spTap }));
+        }
+
+        /* 5. Glass panels & cards — staggered entrance from below */
+        const panels = document.querySelectorAll(
+            '.glass-panel, .card-3d, .showcase-3d, .mhero-banner, .alert-glass'
+        );
+        if (panels.length) {
+            animate(panels,
+                { opacity: [0, 1], y: [22, 0] },
+                { easing: spEntrance, delay: stagger(0.06), duration: 0.55 }
+            );
+        }
+
+        /* 6. Table rows — cascade in */
+        const rows = document.querySelectorAll('tr.receipt-row');
+        if (rows.length) {
+            animate(rows,
+                { opacity: [0, 1], x: [-12, 0] },
+                { easing: spEntrance, delay: stagger(0.04) }
+            );
+        }
+
+        /* 7. Stat value numbers — count-up feel via slight scale pop */
+        const statVals = document.querySelectorAll('.stat-val');
+        if (statVals.length) {
+            animate(statVals,
+                { opacity: [0, 1], scale: [0.88, 1] },
+                { easing: spring({ stiffness: 280, damping: 20 }), delay: stagger(0.07) }
+            );
+        }
+
+        /* 8. Nav links — subtle hover slide */
+        document.querySelectorAll('.nav-link-custom').forEach(el => {
+            el.addEventListener('mouseenter', () =>
+                animate(el, { x: 3 }, { easing: spHover }));
+            el.addEventListener('mouseleave', () =>
+                animate(el, { x: 0 }, { easing: spOut }));
+        });
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+    </script>
 </body>
 </html>
