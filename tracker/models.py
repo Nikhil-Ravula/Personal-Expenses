@@ -41,7 +41,7 @@ class Expense(models.Model):
     category = models.ForeignKey(Category, on_delete=models.CASCADE, related_name='expenses')
     type = models.CharField(max_length=200, help_text="Item description/type, e.g., pizza, auto")
     amount = models.DecimalField(max_digits=12, decimal_places=2)
-    date = models.DateField(default=timezone.now)
+    date = models.DateField(default=timezone.localdate)
     created_via = models.CharField(max_length=10, choices=VIA_CHOICES, default='web')
     created_at = models.DateTimeField(auto_now_add=True)
 

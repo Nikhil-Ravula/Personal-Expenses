@@ -59,7 +59,7 @@ def parse_filter_args(arg_text: str, user=None) -> dict:
         return result
 
     tokens = arg_text.strip().split()
-    now = timezone.now().date()
+    now = timezone.localdate()
     lower_text = arg_text.strip().lower()
 
     # 1. Check relative keywords: today / yesterday

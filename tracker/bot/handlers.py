@@ -177,7 +177,7 @@ def delete_user_category_by_id_or_name(user, identifier: str):
 def add_expense_db(user, category_name: str, exp_type: str, amount_val: Decimal):
     cat_clean = category_name.strip().capitalize()
     cat, _ = Category.objects.get_or_create(user=user, name=cat_clean)
-    now = timezone.now().date()
+    now = timezone.localdate()
 
     expense = Expense.objects.create(
         user=user,
@@ -304,7 +304,7 @@ def get_budget_status_db(user, month=None, year=None):
 
 @sync_to_async
 def modify_budget_db(user, action: str, amount_val: Decimal, month=None, year=None):
-    now = timezone.now().date()
+    now = timezone.localdate()
     month = month or now.month
     year = year or now.year
 

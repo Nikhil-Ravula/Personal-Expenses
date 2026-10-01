@@ -47,7 +47,7 @@ async def prompt_monthly_budgets_job(application):
     """
     Auto-prompts linked users on the 1st of each month to set their budget.
     """
-    now = timezone.now().date()
+    now = timezone.localdate()
     links = await get_linked_users()
 
     for link in links:
@@ -74,7 +74,7 @@ async def end_of_month_report_job(application):
     """
     Dispatches end-of-month summary & PDF report to all linked users.
     """
-    now = timezone.now().date()
+    now = timezone.localdate()
     # Check if today is the last day of the month
     last_day = calendar.monthrange(now.year, now.month)[1]
     if now.day != last_day:

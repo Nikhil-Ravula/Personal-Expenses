@@ -26,7 +26,7 @@ from .services.pdf_generator import generate_expense_pdf
 @login_required
 def dashboard_view(request):
     user = request.user
-    today = timezone.now().date()
+    today = timezone.localdate()
     month = today.month
     year = today.year
 
@@ -192,7 +192,7 @@ def expense_create_view(request):
 
             return redirect('expenses')
     else:
-        form = ExpenseForm(user=user, initial={'date': timezone.now().date()})
+        form = ExpenseForm(user=user, initial={'date': timezone.localdate()})
 
     context = {
         'form': form,
@@ -318,7 +318,7 @@ def profile_view(request):
             return redirect('profile')
 
     # Current month's budget
-    now = timezone.now().date()
+    now = timezone.localdate()
     current_budget = Budget.objects.filter(user=user, month=now.month, year=now.year).first()
 
     telegram_url = f"https://t.me/{bot_username}?start={link.link_code}" if link.link_code and not link.is_linked else f"https://t.me/{bot_username}"
@@ -342,7 +342,7 @@ def set_budget_view(request):
         month_str = request.POST.get('month')
         year_str = request.POST.get('year')
 
-        now = timezone.now().date()
+        now = timezone.localdate()
         month = int(month_str) if month_str and month_str.isdigit() else now.month
         year = int(year_str) if year_str and year_str.isdigit() else now.year
 

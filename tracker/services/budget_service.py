@@ -5,7 +5,7 @@ from tracker.models import Budget, Expense
 
 
 def get_or_create_budget(user, month=None, year=None, default_amount=Decimal('0.00')):
-    now = timezone.now().date()
+    now = timezone.localdate()
     month = month or now.month
     year = year or now.year
 
@@ -22,7 +22,7 @@ def get_budget_status(user, month=None, year=None):
     """
     Returns spending status and budget analytics for the user for the given month/year.
     """
-    now = timezone.now().date()
+    now = timezone.localdate()
     month = month or now.month
     year = year or now.year
 
@@ -63,7 +63,7 @@ def check_budget_thresholds_after_expense(user, expense_date=None):
     Returns:
       list of alert message strings to send the user (if any threshold was just crossed)
     """
-    date_val = expense_date or timezone.now().date()
+    date_val = expense_date or timezone.localdate()
     budget = Budget.objects.filter(user=user, month=date_val.month, year=date_val.year).first()
 
     if not budget or budget.amount <= 0:
