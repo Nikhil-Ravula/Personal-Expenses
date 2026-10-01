@@ -1,6 +1,7 @@
 import html
 import re
 import math
+import calendar
 import logging
 from io import BytesIO
 from decimal import Decimal, InvalidOperation
@@ -12,7 +13,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
 from tracker.models import User, Category, Expense, Budget, TelegramLink, TelegramSession
-from tracker.services.filter_parser import parse_filter_args, apply_expense_filters
+from tracker.services.filter_parser import parse_filter_args, apply_expense_filters, MONTH_NAMES
 from tracker.services.budget_service import get_budget_status, check_budget_thresholds_after_expense, get_or_create_budget
 from tracker.services.pdf_generator import generate_expense_pdf
 
@@ -41,10 +42,11 @@ def escape_md(text) -> str:
 
 
 def strip_html(text: str) -> str:
-    """Strips HTML tags for plain text fallback."""
+    """Strips HTML tags for plain text fallback and unescapes entities."""
     if not text:
         return ""
-    return re.sub(r'<[^>]+>', '', text)
+    clean = re.sub(r'<[^>]+>', '', text)
+    return html.unescape(clean)
 
 
 async def safe_reply(update: Update, text: str, parse_mode: str = 'HTML', reply_markup=None):
@@ -150,6 +152,50 @@ def get_user_categories_data(user):
                 'total': Decimal('0.00')
             })
     return active, empty
+
+
+@sync_to_async
+def get_categories_month_data(user, month: int, year: int):
+    qs = (
+        Expense.objects.filter(user=user, date__year=year, date__month=month)
+        .values('category__id', 'category__name')
+        .annotate(
+            count=Count('id'),
+            total=Sum('amount')
+        )
+        .order_by('-total')
+    )
+    active = [
+        {
+            'id': item['category__id'],
+            'name': item['category__name'],
+            'count': item['count'],
+            'total': item['total'] or Decimal('0.00')
+        }
+        for item in qs
+    ]
+
+    month_agg = Expense.objects.filter(user=user, date__year=year, date__month=month).aggregate(
+        total=Sum('amount'),
+        count=Count('id')
+    )
+    month_total = month_agg['total'] or Decimal('0.00')
+    month_count = month_agg['count'] or 0
+
+    all_cats = list(Category.objects.filter(user=user).order_by('name').values_list('name', flat=True))
+    active_names = {a['name'] for a in active}
+    unused = [name for name in all_cats if name not in active_names]
+
+    return {
+        'month': month,
+        'year': year,
+        'month_name': calendar.month_name[month],
+        'active': active,
+        'total': month_total,
+        'count': month_count,
+        'unused': unused,
+        'has_any_cats': len(all_cats) > 0
+    }
 
 
 @sync_to_async
@@ -355,7 +401,7 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = (
             f"👋 Welcome back, <b>{uname_esc}</b>!\n\n"
             "Your Telegram account is connected to <b>Smart Expense Tracker</b>.\n\n"
-            "💡 Type <code>/help</code> to see the full list of commands.\n"
+            "💡 Type <code>/help</code> to see how to use all commands.\n"
             "Quick example: <code>/add food pizza 150</code>"
         )
     else:
@@ -364,7 +410,7 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "To link your Telegram account with your web dashboard:\n"
             "1. Log into your dashboard on the website.\n"
             "2. Navigate to your <b>Profile</b> page and click <b>Direct Redirect to Telegram</b>.\n"
-            "3. Or send the command: <code>/link &lt;YOUR_CODE&gt;</code> (e.g. <code>/link A7X92B</code>)\n\n"
+            "3. Or copy your 6-digit code and send: <code>/link YOUR_CODE</code> (e.g. <code>/link A7X92B</code>)\n\n"
             "Once linked, all your expenses and reports will sync in real time!"
         )
     await safe_reply(update, msg)
@@ -372,39 +418,43 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
-        "📊 <b>Smart Expense Tracker — Commands</b>\n\n"
-        "🔗 <b>Account Linking</b>\n"
-        "• <code>/link &lt;code&gt;</code> — Connect Telegram to web dashboard\n\n"
-        "💸 <b>Adding Expenses</b>\n"
-        "• <code>/add &lt;category&gt; &lt;item&gt; &lt;amount&gt;</code>\n"
-        "  <i>e.g. <code>/add food pizza 50</code> • <code>/add travel auto 20</code></i>\n\n"
-        "📋 <b>Viewing Expenses</b>\n"
+        "📊 <b>Smart Expense Tracker — Guide</b>\n\n"
+        "💸 <b>Add an Expense</b>\n"
+        "• <code>/add food pizza 150</code>\n"
+        "• <code>/add travel auto 30</code>\n"
+        "• <code>/add shopping shoes 1200</code>\n"
+        "<i>Format: /add category item amount</i>\n\n"
+        "📋 <b>View Expenses</b>\n"
         "• <code>/show</code> — Recent expenses\n"
-        "• <code>/show &lt;month&gt;</code> — e.g. <code>/show september</code>\n"
-        "• <code>/show &lt;date&gt;</code> — e.g. <code>/show 26 september 2026</code>\n\n"
-        "🗑️ <b>Deleting &amp; Editing</b>\n"
-        "• <code>/delete &lt;number&gt;</code> — Delete item from last <code>/show</code> list\n"
-        "• <code>/edit &lt;number&gt;</code> — Edit item from last <code>/show</code> list\n\n"
-        "💰 <b>Totals &amp; Analytics</b>\n"
+        "• <code>/show september</code> — Filter by month\n"
+        "• <code>/show food</code> — Filter by category\n"
+        "• <code>/show today</code> — Today's expenses\n\n"
+        "🗑️ <b>Delete & Edit</b>\n"
+        "• <code>/delete 1</code> — Delete item #1 from /show list\n"
+        "• <code>/edit 1</code> — Edit item #1 from /show list\n\n"
+        "💰 <b>Totals & Spending</b>\n"
         "• <code>/total</code> — Total of all expenses\n"
-        "• <code>/total &lt;month&gt;</code> — Total for month\n"
-        "• <code>/total &lt;category&gt;</code> — Total for category\n"
-        "• <code>/total &lt;month&gt; &lt;category&gt;</code> — Category total for month\n\n"
-        "🏷️ <b>Categories</b>\n"
-        "• <code>/create &lt;category&gt;</code> — Create custom category\n"
-        "• <code>/categories</code> — View all categories\n"
-        "• <code>/empty_categories</code> — View &amp; delete empty categories\n"
-        "• <code>/delete_category &lt;name&gt;</code> — Delete empty category\n\n"
+        "• <code>/total september</code> — Total for a month\n"
+        "• <code>/total food</code> — Total for a category\n\n"
         "🎯 <b>Monthly Budget</b>\n"
         "• <code>/budget</code> — View current budget status\n"
-        "• <code>/budget &lt;amount&gt;</code> — Set monthly limit\n"
-        "• <code>/budget add &lt;amount&gt;</code> — Add to budget\n"
-        "• <code>/budget remove &lt;amount&gt;</code> — Deduct from budget\n"
+        "• <code>/budget 5000</code> — Set monthly limit to ₹5,000\n"
+        "• <code>/budget add 1000</code> — Add ₹1,000 to limit\n"
+        "• <code>/budget remove 500</code> — Deduct ₹500 from limit\n"
         "• <code>/budget remaining</code> — Quick remaining balance\n\n"
+        "🏷️ <b>Categories</b>\n"
+        "• <code>/categories</code> — This month's categories\n"
+        "• <code>/categories all</code> — All months (all time)\n"
+        "• <code>/categories sep</code> — Specific month\n"
+        "• <code>/categories sep,oct</code> — Compare 2 or 3 months\n"
+        "• <code>/create Books</code> — Create new category\n"
+        "• <code>/empty_categories</code> — Delete unused categories\n\n"
         "📄 <b>PDF Reports</b>\n"
         "• <code>/pdf</code> — Download full expense report\n"
-        "• <code>/pdf &lt;month&gt;</code> — PDF for that month\n"
-        "• <code>/pdf &lt;category&gt;</code> — PDF for that category"
+        "• <code>/pdf september</code> — PDF for that month\n"
+        "• <code>/pdf food</code> — PDF for that category\n\n"
+        "🔗 <b>Account Linking</b>\n"
+        "• <code>/link 123456</code> — Connect using code from website profile"
     )
     await safe_reply(update, help_text)
 
@@ -414,9 +464,9 @@ async def link_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await safe_reply(
             update,
-            "⚠️ Please provide your 6-digit link code.\n"
-            "Format: <code>/link &lt;code&gt;</code> (e.g. <code>/link 4B9K2A</code>)\n"
-            "Generate your code from the web Profile page."
+            "⚠️ <b>Please provide your 6-digit link code.</b>\n\n"
+            "Format: <code>/link 4B9K2A</code>\n"
+            "Generate your code from the website <b>Profile</b> page."
         )
         return
 
@@ -428,11 +478,11 @@ async def link_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def create_category_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = await get_user_by_chat_id(update.effective_chat.id)
     if not user:
-        await safe_reply(update, "⚠️ Please link your account first using <code>/link &lt;code&gt;</code>.")
+        await safe_reply(update, "⚠️ Please link your account first using <code>/link YOUR_CODE</code>.")
         return
 
     if not context.args:
-        await safe_reply(update, "⚠️ Please specify a category name.\nFormat: <code>/create &lt;category&gt;</code> (e.g. <code>/create Books</code>)")
+        await safe_reply(update, "⚠️ <b>Please specify a category name.</b>\n\nExample: <code>/create Books</code> or <code>/create Gym</code>")
         return
 
     cat_name = " ".join(context.args).strip()
@@ -444,55 +494,173 @@ async def create_category_handler(update: Update, context: ContextTypes.DEFAULT_
         await safe_reply(update, f"ℹ️ Category <b>{cat_esc}</b> already exists.")
 
 
+def parse_category_args(arg_text: str, default_month: int, default_year: int):
+    text = (arg_text or '').strip().lower()
+    if not text:
+        return 'current', [(default_month, default_year)]
+    if text == 'all':
+        return 'all', []
+
+    tokens = [p.strip() for p in re.split(r'[,;\s]+', text) if p.strip()]
+
+    custom_year = None
+    month_tokens = []
+    for token in tokens:
+        if token.isdigit() and len(token) == 4:
+            custom_year = int(token)
+        else:
+            month_tokens.append(token)
+
+    target_year = custom_year or default_year
+    months = []
+    invalid_tokens = []
+
+    for token in month_tokens:
+        if token in MONTH_NAMES:
+            m_num = MONTH_NAMES[token]
+            if (m_num, target_year) not in months:
+                months.append((m_num, target_year))
+        else:
+            invalid_tokens.append(token)
+
+    if invalid_tokens or not months:
+        return 'invalid', invalid_tokens
+
+    return 'months', months
+
+
 async def categories_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     user = await get_user_by_chat_id(chat_id)
     if not user:
-        await safe_reply(update, "⚠️ Please link your account first using <code>/link &lt;code&gt;</code>.")
+        await safe_reply(update, "⚠️ Please link your account first using <code>/link YOUR_CODE</code>.")
         return
 
-    active, empty = await get_user_categories_data(user)
+    now = timezone.localdate()
+    arg_text = " ".join(context.args).strip() if context.args else ""
+    mode, months = parse_category_args(arg_text, default_month=now.month, default_year=now.year)
 
-    if not active and not empty:
+    if mode == 'invalid':
+        inv_str = ", ".join(escape_html(t) for t in months) if months else escape_html(arg_text)
         await safe_reply(
             update,
-            "🏷️ You have no categories yet.\n"
-            "Create one using: <code>/create &lt;category&gt;</code> (e.g. <code>/create Shopping</code>)"
+            f"⚠️ <b>Unknown month:</b> <code>{inv_str}</code>\n\n"
+            "<b>Usage:</b>\n"
+            "• <code>/categories</code> — This month\n"
+            "• <code>/categories all</code> — All months (all time)\n"
+            "• <code>/categories jan</code> — Specific month\n"
+            "• <code>/categories jan,feb</code> — Multiple months (2 or 3 months)\n"
+            "• <code>/categories sep,oct,nov 2026</code>"
         )
         return
 
-    lines = ["🏷️ <b>Your Expense Categories</b>", ""]
+    if mode == 'all':
+        active, empty = await get_user_categories_data(user)
+        if not active and not empty:
+            await safe_reply(
+                update,
+                "🏷️ You have no categories yet.\n"
+                "Create one using: <code>/create Shopping</code>"
+            )
+            return
 
-    if active:
-        lines.append("<b>Active Categories:</b>")
-        for c in active:
-            c_esc = escape_html(c['name'])
-            lines.append(f"• <b>{c_esc}</b> — {c['count']} expense(s) (<code>₹{c['total']:,.2f}</code>)")
+        total_spent = sum(c['total'] for c in active)
+        total_count = sum(c['count'] for c in active)
+
+        lines = ["🏷️ <b>Categories • All Time</b>", ""]
+
+        if active:
+            lines.append("<b>Active Categories:</b>")
+            for c in active:
+                c_esc = escape_html(c['name'])
+                lines.append(f"• <b>{c_esc}</b> — {c['count']} expense(s) (<code>₹{c['total']:,.2f}</code>)")
+            lines.append("")
+            lines.append(f"💰 <b>Overall Total:</b> <code>₹{total_spent:,.2f}</code> ({total_count} items)")
+            lines.append("")
+
+        keyboard = []
+        if empty:
+            lines.append("🗑️ <b>Empty Categories (0 expenses • Safe to delete):</b>")
+            for idx, c in enumerate(empty, start=1):
+                c_esc = escape_html(c['name'])
+                lines.append(f"<b>{idx}.</b> {c_esc} (0 expenses)")
+                keyboard.append([
+                    InlineKeyboardButton(f"🗑️ Delete {c['name']}", callback_data=f"delcat_{c['id']}")
+                ])
+            lines.append("")
+            lines.append("💡 Tap a button above to delete, or send: <code>/delete_category name</code> (e.g. <code>/delete_category Books</code>)")
+        else:
+            lines.append("✨ All your categories currently have recorded expenses!")
+
+        reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+        await safe_reply(update, "\n".join(lines), reply_markup=reply_markup)
+        return
+
+    # Single month: mode == 'current' or (mode == 'months' and len(months) == 1)
+    if len(months) == 1:
+        m, y = months[0]
+        data = await get_categories_month_data(user, m, y)
+        if not data['has_any_cats']:
+            await safe_reply(
+                update,
+                "🏷️ You have no categories yet.\n"
+                "Create one using: <code>/create Shopping</code>"
+            )
+            return
+
+        lines = [f"🏷️ <b>Categories • {data['month_name']} {data['year']}</b>", ""]
+
+        if data['active']:
+            for c in data['active']:
+                c_esc = escape_html(c['name'])
+                lines.append(f"• <b>{c_esc}</b> — {c['count']} expense(s) (<code>₹{c['total']:,.2f}</code>)")
+            lines.append("")
+            lines.append(f"💰 <b>Total for {data['month_name']}:</b> <code>₹{data['total']:,.2f}</code> ({data['count']} items)")
+            lines.append("")
+        else:
+            lines.append(f"ℹ️ No expenses recorded for <b>{data['month_name']} {data['year']}</b> yet.\n")
+
+        if data['unused']:
+            unused_esc = ", ".join(escape_html(name) for name in data['unused'])
+            lines.append(f"⚪ <i>Unused in {data['month_name']}:</i> {unused_esc}")
+            lines.append("")
+
+        lines.append("💡 <i>Send <code>/categories all</code> to view all-time totals across all months.</i>")
+        await safe_reply(update, "\n".join(lines))
+        return
+
+    # Multiple months: len(months) > 1
+    lines = ["🏷️ <b>Categories Comparison</b>", ""]
+    combined_total = Decimal('0.00')
+    combined_count = 0
+
+    for m, y in months:
+        data = await get_categories_month_data(user, m, y)
+        lines.append(f"📅 <b>{data['month_name']} {data['year']}</b>")
+
+        if data['active']:
+            for c in data['active']:
+                c_esc = escape_html(c['name'])
+                lines.append(f"• <b>{c_esc}</b> — {c['count']} exp (<code>₹{c['total']:,.2f}</code>)")
+            lines.append(f"💰 <b>Total:</b> <code>₹{data['total']:,.2f}</code> ({data['count']} items)")
+        else:
+            lines.append("<i>No expenses recorded in this month.</i>")
+
         lines.append("")
+        combined_total += data['total']
+        combined_count += data['count']
 
-    keyboard = []
-    if empty:
-        lines.append("🗑️ <b>Empty Categories (0 expenses • Safe to delete):</b>")
-        for idx, c in enumerate(empty, start=1):
-            c_esc = escape_html(c['name'])
-            lines.append(f"<b>{idx}.</b> {c_esc} (0 expenses)")
-            keyboard.append([
-                InlineKeyboardButton(f"🗑️ Delete {c['name']}", callback_data=f"delcat_{c['id']}")
-            ])
-        lines.append("")
-        lines.append("💡 <i>Tap a button above to delete, or send:</i> <code>/delete_category &lt;name&gt;</code>")
-    else:
-        lines.append("✨ All your categories currently have active expenses!")
+    lines.append("━━━━━━━━━━━━━━━━━")
+    lines.append(f"📊 <b>Combined Total:</b> <code>₹{combined_total:,.2f}</code> ({combined_count} items across {len(months)} months)")
 
-    reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
-    await safe_reply(update, "\n".join(lines), reply_markup=reply_markup)
+    await safe_reply(update, "\n".join(lines))
 
 
 async def empty_categories_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     user = await get_user_by_chat_id(chat_id)
     if not user:
-        await safe_reply(update, "⚠️ Please link your account first using <code>/link &lt;code&gt;</code>.")
+        await safe_reply(update, "⚠️ Please link your account first using <code>/link YOUR_CODE</code>.")
         return
 
     _, empty = await get_user_categories_data(user)
@@ -515,7 +683,7 @@ async def empty_categories_handler(update: Update, context: ContextTypes.DEFAULT
         ])
 
     lines.append("")
-    lines.append("💡 <i>Tap a button above to delete, or send:</i> <code>/delete_category &lt;name&gt;</code>")
+    lines.append("💡 Tap a button above to delete, or send: <code>/delete_category name</code> (e.g. <code>/delete_category Books</code>)")
 
     reply_markup = InlineKeyboardMarkup(keyboard)
     await safe_reply(update, "\n".join(lines), reply_markup=reply_markup)
@@ -525,15 +693,15 @@ async def delete_category_handler(update: Update, context: ContextTypes.DEFAULT_
     chat_id = update.effective_chat.id
     user = await get_user_by_chat_id(chat_id)
     if not user:
-        await safe_reply(update, "⚠️ Please link your account first using <code>/link &lt;code&gt;</code>.")
+        await safe_reply(update, "⚠️ Please link your account first using <code>/link YOUR_CODE</code>.")
         return
 
     if not context.args:
         await safe_reply(
             update,
-            "⚠️ Please specify the category to delete.\n"
-            "Usage: <code>/delete_category &lt;name&gt;</code> (e.g. <code>/delete_category daily_items</code>)\n"
-            "💡 Use <code>/empty_categories</code> to see all empty categories."
+            "⚠️ <b>Please specify the category to delete.</b>\n\n"
+            "Example: <code>/delete_category Books</code>\n"
+            "💡 Send <code>/empty_categories</code> to see all empty categories."
         )
         return
 
@@ -554,7 +722,7 @@ async def delete_category_handler(update: Update, context: ContextTypes.DEFAULT_
 async def add_expense_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = await get_user_by_chat_id(update.effective_chat.id)
     if not user:
-        await safe_reply(update, "⚠️ Please link your account first using <code>/link &lt;code&gt;</code>.")
+        await safe_reply(update, "⚠️ Please link your account first using <code>/link YOUR_CODE</code>.")
         return
 
     # Syntax: /add <category> <type> <price>
@@ -562,11 +730,12 @@ async def add_expense_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not context.args or len(context.args) < 3:
         await safe_reply(
             update,
-            "⚠️ Invalid format.\n"
-            "Usage: <code>/add &lt;category&gt; &lt;item&gt; &lt;price&gt;</code>\n\n"
-            "Examples:\n"
+            "⚠️ <b>How to add an expense:</b>\n\n"
+            "Send: <code>/add category item amount</code>\n\n"
+            "<b>Examples:</b>\n"
             "• <code>/add food pizza 50</code>\n"
-            "• <code>/add travel auto 10</code>"
+            "• <code>/add travel auto 20</code>\n"
+            "• <code>/add shopping shoes 1200</code>"
         )
         return
 
@@ -620,7 +789,7 @@ def build_show_page_content(expenses, total_amount, total_count, current_page, t
     else:
         lines.append(f"💰 <b>Total:</b> <code>₹{total_amount:,.2f}</code> ({total_count} items)")
 
-    lines.append("<i>Tip: To delete an item, reply <code>/delete &lt;number&gt;</code>.</i>")
+    lines.append("💡 Tip: To delete an item, reply <code>/delete 1</code>")
     text = "\n".join(lines)
 
     keyboard = []
@@ -641,7 +810,7 @@ async def show_expenses_handler(update: Update, context: ContextTypes.DEFAULT_TY
     chat_id = update.effective_chat.id
     user = await get_user_by_chat_id(chat_id)
     if not user:
-        await safe_reply(update, "⚠️ Please link your account first using <code>/link &lt;code&gt;</code>.")
+        await safe_reply(update, "⚠️ Please link your account first using <code>/link YOUR_CODE</code>.")
         return
 
     filter_text = " ".join(context.args).strip() if context.args else ""
@@ -670,14 +839,15 @@ async def delete_expense_handler(update: Update, context: ContextTypes.DEFAULT_T
     chat_id = update.effective_chat.id
     user = await get_user_by_chat_id(chat_id)
     if not user:
-        await safe_reply(update, "⚠️ Please link your account first using <code>/link &lt;code&gt;</code>.")
+        await safe_reply(update, "⚠️ Please link your account first using <code>/link YOUR_CODE</code>.")
         return
 
     if not context.args or not context.args[0].isdigit():
         await safe_reply(
             update,
-            "⚠️ Please specify the number from your last <code>/show</code> list.\n"
-            "Example: <code>/delete 1</code>"
+            "⚠️ <b>Please specify the number from your list.</b>\n\n"
+            "Example: <code>/delete 1</code>\n"
+            "💡 Send <code>/show</code> first to see the numbered list of expenses."
         )
         return
 
@@ -731,11 +901,16 @@ async def edit_expense_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     chat_id = update.effective_chat.id
     user = await get_user_by_chat_id(chat_id)
     if not user:
-        await safe_reply(update, "⚠️ Please link your account first using <code>/link &lt;code&gt;</code>.")
+        await safe_reply(update, "⚠️ Please link your account first using <code>/link YOUR_CODE</code>.")
         return
 
     if not context.args or not context.args[0].isdigit():
-        await safe_reply(update, "⚠️ Usage: <code>/edit &lt;number&gt;</code>\nExample: <code>/edit 1</code> (referencing the last <code>/show</code> list)")
+        await safe_reply(
+            update,
+            "⚠️ <b>Please specify the number to edit.</b>\n\n"
+            "Example: <code>/edit 1</code>\n"
+            "💡 Send <code>/show</code> first to see the numbered list of expenses."
+        )
         return
 
     item_num = int(context.args[0])
@@ -760,15 +935,15 @@ async def edit_expense_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     await safe_reply(
         update,
         f"✏️ Editing <b>{type_esc}</b> (Current amount: <code>₹{exp.amount:,.2f}</code>).\n\n"
-        "Please reply with the new description and amount:\n"
-        "Format: <code>&lt;description&gt; &lt;amount&gt;</code> (e.g. <code>Pizza with cheese 60</code>)"
+        "Reply with the new description and amount:\n"
+        "Example: <code>Pizza with cheese 60</code>"
     )
 
 
 async def total_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = await get_user_by_chat_id(update.effective_chat.id)
     if not user:
-        await safe_reply(update, "⚠️ Please link your account first using <code>/link &lt;code&gt;</code>.")
+        await safe_reply(update, "⚠️ Please link your account first using <code>/link YOUR_CODE</code>.")
         return
 
     filter_text = " ".join(context.args).strip() if context.args else ""
@@ -788,7 +963,27 @@ async def pdf_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     user = await get_user_by_chat_id(chat_id)
     if not user:
-        await safe_reply(update, "⚠️ Please link your account first using <code>/link &lt;code&gt;</code>.")
+        await safe_reply(update, "⚠️ Please link your account first using <code>/link YOUR_CODE</code>.")
+        return
+
+    filter_text = " ".join(context.args).strip() if context.args else ""
+    total, count, label = await query_total_db(user, filter_text)
+
+    safe_label = escape_html(label)
+    msg = (
+        f"📊 <b>Expense Total</b>\n\n"
+        f"• <b>Scope:</b> {safe_label}\n"
+        f"• <b>Total Amount:</b> <code>₹{total:,.2f}</code>\n"
+        f"• <b>Transactions:</b> {count}"
+    )
+    await safe_reply(update, msg)
+
+
+async def pdf_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    user = await get_user_by_chat_id(chat_id)
+    if not user:
+        await safe_reply(update, "⚠️ Please link your account first using <code>/link YOUR_CODE</code>.")
         return
 
     filter_text = " ".join(context.args).strip() if context.args else ""
@@ -814,7 +1009,7 @@ async def pdf_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def budget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = await get_user_by_chat_id(update.effective_chat.id)
     if not user:
-        await safe_reply(update, "⚠️ Please link your account first using <code>/link &lt;code&gt;</code>.")
+        await safe_reply(update, "⚠️ Please link your account first using <code>/link YOUR_CODE</code>.")
         return
 
     args = context.args
@@ -825,14 +1020,14 @@ async def budget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not status['has_budget']:
             await safe_reply(
                 update,
-                f"ℹ️ No budget set for <b>{timezone.now().strftime('%B %Y')}</b>.\n"
-                "To set a budget limit, send: <code>/budget &lt;amount&gt;</code> (e.g. <code>/budget 5000</code>)"
+                f"ℹ️ No budget set for <b>{timezone.localdate().strftime('%B %Y')}</b>.\n\n"
+                "To set a budget limit, send: <code>/budget 5000</code>"
             )
             return
 
         status_icon = "🚨" if status['is_over'] else ("⚠️" if status['percent_spent'] >= 80 else "✅")
         msg = (
-            f"{status_icon} <b>Monthly Budget Status ({timezone.now().strftime('%B %Y')})</b>\n\n"
+            f"{status_icon} <b>Monthly Budget Status ({timezone.localdate().strftime('%B %Y')})</b>\n\n"
             f"• <b>Budget Limit:</b> <code>₹{status['budget_amount']:,.2f}</code>\n"
             f"• <b>Total Spent:</b> <code>₹{status['total_spent']:,.2f}</code> ({status['percent_spent']}%)\n"
             f"• <b>Remaining:</b> <code>₹{status['remaining']:,.2f}</code>\n"
@@ -848,7 +1043,7 @@ async def budget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if first_arg == 'remaining':
         status = await get_budget_status_db(user)
         if not status['has_budget']:
-            await safe_reply(update, "ℹ️ No budget set for this month yet. Set one via <code>/budget &lt;amount&gt;</code>.")
+            await safe_reply(update, "ℹ️ No budget set for this month yet. Set one via: <code>/budget 5000</code>")
             return
         await safe_reply(update, f"💰 <b>Remaining budget for this month:</b> <code>₹{status['remaining']:,.2f}</code>")
         return
@@ -856,7 +1051,7 @@ async def budget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # 3. /budget add <amount>
     if first_arg == 'add':
         if len(args) < 2:
-            await safe_reply(update, "⚠️ Usage: <code>/budget add &lt;amount&gt;</code> (e.g. <code>/budget add 1000</code>)")
+            await safe_reply(update, "⚠️ Example: <code>/budget add 1000</code>")
             return
         try:
             amt = Decimal(args[1])
@@ -869,7 +1064,7 @@ async def budget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # 4. /budget remove <amount>
     if first_arg == 'remove':
         if len(args) < 2:
-            await safe_reply(update, "⚠️ Usage: <code>/budget remove &lt;amount&gt;</code> (e.g. <code>/budget remove 500</code>)")
+            await safe_reply(update, "⚠️ Example: <code>/budget remove 500</code>")
             return
         try:
             amt = Decimal(args[1])
@@ -892,17 +1087,17 @@ async def budget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         amt = Decimal(first_arg)
         budget = await modify_budget_db(user, action='set', amount_val=amt)
-        await safe_reply(update, f"🎯 Budget for <b>{timezone.now().strftime('%B %Y')}</b> set to <code>₹{budget.amount:,.2f}</code>.")
+        await safe_reply(update, f"🎯 Budget for <b>{timezone.localdate().strftime('%B %Y')}</b> set to <code>₹{budget.amount:,.2f}</code>.")
     except (InvalidOperation, ValueError):
         await safe_reply(
             update,
             "⚠️ <b>Invalid budget command.</b>\n\n"
-            "Examples:\n"
-            "• <code>/budget 5000</code>\n"
+            "<b>Examples:</b>\n"
+            "• <code>/budget 5000</code> (set monthly budget)\n"
             "• <code>/budget september 6000</code>\n"
-            "• <code>/budget add 1000</code>\n"
-            "• <code>/budget remove 500</code>\n"
-            "• <code>/budget remaining</code>"
+            "• <code>/budget add 1000</code> (increase budget)\n"
+            "• <code>/budget remove 500</code> (decrease budget)\n"
+            "• <code>/budget remaining</code> (view balance)"
         )
 
 
@@ -940,9 +1135,9 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             amt = Decimal(text.replace('₹', '').replace(',', '').strip())
             budget = await modify_budget_db(user, action='set', amount_val=amt)
             await clear_pending_action(chat_id)
-            await safe_reply(update, f"🎯 Budget for <b>{timezone.now().strftime('%B %Y')}</b> set to <code>₹{budget.amount:,.2f}</code>!")
+            await safe_reply(update, f"🎯 Budget for <b>{timezone.localdate().strftime('%B %Y')}</b> set to <code>₹{budget.amount:,.2f}</code>!")
         except (InvalidOperation, ValueError):
-            await safe_reply(update, "Please reply with a valid number for your budget, or send <code>/help</code>.")
+            await safe_reply(update, "Please reply with a valid number for your budget (e.g. <code>5000</code>), or send <code>/help</code>.")
         return
 
     if pending_action == 'edit_pending':
@@ -962,7 +1157,7 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                 return
             except (InvalidOperation, ValueError):
                 pass
-        await safe_reply(update, "⚠️ Format: <code>&lt;description&gt; &lt;amount&gt;</code> (e.g. <code>Dinner 150</code>) or type <code>/cancel</code>.")
+        await safe_reply(update, "⚠️ Reply with description and amount (e.g. <code>Dinner 150</code>) or send <code>/cancel</code>.")
 
 
 async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):

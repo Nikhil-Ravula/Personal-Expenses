@@ -58,8 +58,8 @@ async def prompt_monthly_budgets_job(application):
                 uname_esc = escape_html(link.user.username)
                 msg = (
                     f"👋 Good morning, <b>{uname_esc}</b>!\n\n"
-                    f"A new month (<b>{now.strftime('%B %Y')}</b>) has begun. 🎯\n"
-                    "Reply to this message with a number (e.g. <code>5000</code>) to set your budget limit for this month, or use <code>/budget &lt;amount&gt;</code>."
+                    f"A new month (<b>{now.strftime('%B %Y')}</b>) has begun. 🎯\n\n"
+                    "Reply to this message with a number (e.g. <code>5000</code>) to set your budget limit, or send: <code>/budget 5000</code>"
                 )
                 try:
                     await application.bot.send_message(chat_id=link.chat_id, text=msg, parse_mode='HTML')
