@@ -14,7 +14,7 @@ from telegram.ext import ContextTypes
 
 from tracker.models import User, Category, Expense, Budget, TelegramLink, TelegramSession
 from tracker.services.filter_parser import parse_filter_args, apply_expense_filters, MONTH_NAMES
-from tracker.services.budget_service import get_budget_status, check_budget_thresholds_after_expense, get_or_create_budget
+from tracker.services.budget_service import get_budget_status, get_all_time_budget_status, check_budget_thresholds_after_expense, get_or_create_budget
 from tracker.services.pdf_generator import generate_expense_pdf
 
 logger = logging.getLogger(__name__)
@@ -349,6 +349,11 @@ def get_budget_status_db(user, month=None, year=None):
 
 
 @sync_to_async
+def get_all_time_budget_status_db(user):
+    return get_all_time_budget_status(user)
+
+
+@sync_to_async
 def modify_budget_db(user, action: str, amount_val: Decimal, month=None, year=None):
     now = timezone.localdate()
     month = month or now.month
@@ -425,34 +430,43 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• <code>/add shopping shoes 1200</code>\n"
         "<i>Format: /add category item amount</i>\n\n"
         "📋 <b>View Expenses</b>\n"
-        "• <code>/show</code> — Recent expenses\n"
-        "• <code>/show september</code> — Filter by month\n"
-        "• <code>/show food</code> — Filter by category\n"
+        "• <code>/show</code> — This month's expenses\n"
+        "• <code>/show food</code> — Food expenses for this month\n"
+        "• <code>/show food oct</code> — Food expenses for October\n"
+        "• <code>/show food all</code> — Food expenses across all months\n"
+        "• <code>/show all</code> — All expenses across all time\n"
         "• <code>/show today</code> — Today's expenses\n\n"
         "🗑️ <b>Delete & Edit</b>\n"
         "• <code>/delete 1</code> — Delete item #1 from /show list\n"
         "• <code>/edit 1</code> — Edit item #1 from /show list\n\n"
         "💰 <b>Totals & Spending</b>\n"
-        "• <code>/total</code> — Total of all expenses\n"
-        "• <code>/total september</code> — Total for a month\n"
-        "• <code>/total food</code> — Total for a category\n\n"
-        "🎯 <b>Monthly Budget</b>\n"
-        "• <code>/budget</code> — View current budget status\n"
-        "• <code>/budget 5000</code> — Set monthly limit to ₹5,000\n"
-        "• <code>/budget add 1000</code> — Add ₹1,000 to limit\n"
-        "• <code>/budget remove 500</code> — Deduct ₹500 from limit\n"
+        "• <code>/total</code> — Total for this month\n"
+        "• <code>/total food</code> — Food total for this month\n"
+        "• <code>/total food oct</code> — Food total for October\n"
+        "• <code>/total food all</code> — All-time food total\n"
+        "• <code>/total all</code> — All-time overall total\n\n"
+        "🎯 <b>Monthly & All-Time Budget</b>\n"
+        "• <code>/budget</code> — View this month's budget status\n"
+        "• <code>/budget oct</code> — View budget for a specific month\n"
+        "• <code>/budget all</code> — All-time budget & spending up to last transaction\n"
+        "• <code>/budget 5000</code> — Set this month's budget\n"
+        "• <code>/budget oct 6000</code> — Set budget for a specific month\n"
+        "• <code>/budget add 1000</code> — Increase current budget\n"
+        "• <code>/budget remove 500</code> — Decrease current budget\n"
         "• <code>/budget remaining</code> — Quick remaining balance\n\n"
         "🏷️ <b>Categories</b>\n"
         "• <code>/categories</code> — This month's categories\n"
         "• <code>/categories all</code> — All months (all time)\n"
-        "• <code>/categories sep</code> — Specific month\n"
+        "• <code>/categories oct</code> — Specific month\n"
         "• <code>/categories sep,oct</code> — Compare 2 or 3 months\n"
         "• <code>/create Books</code> — Create new category\n"
         "• <code>/empty_categories</code> — Delete unused categories\n\n"
-        "📄 <b>PDF Reports</b>\n"
-        "• <code>/pdf</code> — Download full expense report\n"
-        "• <code>/pdf september</code> — PDF for that month\n"
-        "• <code>/pdf food</code> — PDF for that category\n\n"
+        "📄 <b>Executive PDF Reports</b>\n"
+        "• <code>/pdf</code> — PDF report for this month\n"
+        "• <code>/pdf food</code> — Food report for this month\n"
+        "• <code>/pdf food oct</code> — Food report for October\n"
+        "• <code>/pdf food all</code> — All-time food report\n"
+        "• <code>/pdf all</code> — All-time expense report\n\n"
         "🔗 <b>Account Linking</b>\n"
         "• <code>/link 123456</code> — Connect using code from website profile"
     )
@@ -967,26 +981,6 @@ async def pdf_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     filter_text = " ".join(context.args).strip() if context.args else ""
-    total, count, label = await query_total_db(user, filter_text)
-
-    safe_label = escape_html(label)
-    msg = (
-        f"📊 <b>Expense Total</b>\n\n"
-        f"• <b>Scope:</b> {safe_label}\n"
-        f"• <b>Total Amount:</b> <code>₹{total:,.2f}</code>\n"
-        f"• <b>Transactions:</b> {count}"
-    )
-    await safe_reply(update, msg)
-
-
-async def pdf_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    user = await get_user_by_chat_id(chat_id)
-    if not user:
-        await safe_reply(update, "⚠️ Please link your account first using <code>/link YOUR_CODE</code>.")
-        return
-
-    filter_text = " ".join(context.args).strip() if context.args else ""
     status_msg = await safe_reply(update, "⏳ Generating your PDF report...")
 
     try:
@@ -1013,21 +1007,24 @@ async def budget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     args = context.args
+    now = timezone.localdate()
 
-    # 1. /budget (view current)
+    # 1. /budget (view current month)
     if not args:
-        status = await get_budget_status_db(user)
+        status = await get_budget_status_db(user, month=now.month, year=now.year)
         if not status['has_budget']:
+            spent_str = f"• <b>Total Spent so far:</b> <code>₹{status['total_spent']:,.2f}</code>\n\n" if status['total_spent'] > 0 else ""
             await safe_reply(
                 update,
-                f"ℹ️ No budget set for <b>{timezone.localdate().strftime('%B %Y')}</b>.\n\n"
+                f"ℹ️ No budget set for <b>{now.strftime('%B %Y')}</b>.\n"
+                f"{spent_str}"
                 "To set a budget limit, send: <code>/budget 5000</code>"
             )
             return
 
         status_icon = "🚨" if status['is_over'] else ("⚠️" if status['percent_spent'] >= 80 else "✅")
         msg = (
-            f"{status_icon} <b>Monthly Budget Status ({timezone.localdate().strftime('%B %Y')})</b>\n\n"
+            f"{status_icon} <b>Monthly Budget Status ({now.strftime('%B %Y')})</b>\n\n"
             f"• <b>Budget Limit:</b> <code>₹{status['budget_amount']:,.2f}</code>\n"
             f"• <b>Total Spent:</b> <code>₹{status['total_spent']:,.2f}</code> ({status['percent_spent']}%)\n"
             f"• <b>Remaining:</b> <code>₹{status['remaining']:,.2f}</code>\n"
@@ -1039,66 +1036,161 @@ async def budget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     first_arg = args[0].lower()
 
-    # 2. /budget remaining
+    # 2. /budget all (up to the last transaction)
+    if first_arg in ('all', 'all-time', 'alltime', 'overall'):
+        status = await get_all_time_budget_status_db(user)
+        if status['total_count'] == 0:
+            await safe_reply(update, "ℹ️ You haven't recorded any expenses yet.")
+            return
+
+        first_date_str = status['first_date'].strftime('%d %b %Y') if status['first_date'] else 'N/A'
+        last_date_str = status['last_date'].strftime('%d %b %Y') if status['last_date'] else 'N/A'
+
+        msg = (
+            f"📊 <b>All-Time Budget & Expense Summary</b>\n"
+            f"<i>(From {first_date_str} up to last transaction on {last_date_str})</i>\n\n"
+            f"• <b>Total Expenses Recorded:</b> {status['total_count']}\n"
+            f"• <b>Total Spent:</b> <code>₹{status['total_spent']:,.2f}</code>\n"
+        )
+        if status['has_budget']:
+            status_icon = "🚨" if status['is_over'] else ("⚠️" if status['percent_spent'] >= 80 else "✅")
+            msg += (
+                f"• <b>Total Budgets Configured:</b> <code>₹{status['total_budget']:,.2f}</code>\n"
+                f"• <b>Remaining Balance:</b> <code>₹{status['remaining']:,.2f}</code> ({status['percent_spent']}% spent)\n"
+            )
+            if status['is_over']:
+                msg += f"\n🚨 <b>Overall Over Budget by <code>₹{abs(status['remaining']):,.2f}</code>!</b>"
+        else:
+            msg += "\n💡 <i>No monthly budgets configured. Set one with <code>/budget 5000</code>.</i>"
+
+        await safe_reply(update, msg)
+        return
+
+    # 3. /budget remaining [all | month]
     if first_arg == 'remaining':
-        status = await get_budget_status_db(user)
+        if len(args) > 1:
+            sub_arg = args[1].lower()
+            if sub_arg in ('all', 'all-time', 'alltime'):
+                status = await get_all_time_budget_status_db(user)
+                if not status['has_budget']:
+                    await safe_reply(update, "ℹ️ No budgets configured yet. Set one via: <code>/budget 5000</code>")
+                    return
+                await safe_reply(update, f"💰 <b>Overall remaining balance across all months:</b> <code>₹{status['remaining']:,.2f}</code>")
+                return
+            elif sub_arg in MONTH_NAMES:
+                m_val = MONTH_NAMES[sub_arg]
+                m_name = calendar.month_name[m_val]
+                status = await get_budget_status_db(user, month=m_val, year=now.year)
+                if not status['has_budget']:
+                    await safe_reply(update, f"ℹ️ No budget set for <b>{m_name} {now.year}</b>. Set one via: <code>/budget {sub_arg} 5000</code>")
+                    return
+                await safe_reply(update, f"💰 <b>Remaining budget for {m_name} {now.year}:</b> <code>₹{status['remaining']:,.2f}</code>")
+                return
+
+        status = await get_budget_status_db(user, month=now.month, year=now.year)
         if not status['has_budget']:
             await safe_reply(update, "ℹ️ No budget set for this month yet. Set one via: <code>/budget 5000</code>")
             return
         await safe_reply(update, f"💰 <b>Remaining budget for this month:</b> <code>₹{status['remaining']:,.2f}</code>")
         return
 
-    # 3. /budget add <amount>
+    # 4. /budget add <amount>
     if first_arg == 'add':
         if len(args) < 2:
             await safe_reply(update, "⚠️ Example: <code>/budget add 1000</code>")
             return
         try:
-            amt = Decimal(args[1])
+            amt = Decimal(args[1].replace('₹', '').replace(',', ''))
             budget = await modify_budget_db(user, action='add', amount_val=amt)
             await safe_reply(update, f"✅ Added <b>₹{amt:,.2f}</b>.\nNew budget for this month: <code>₹{budget.amount:,.2f}</code>")
         except (InvalidOperation, ValueError):
             await safe_reply(update, "❌ Invalid amount.")
         return
 
-    # 4. /budget remove <amount>
+    # 5. /budget remove <amount>
     if first_arg == 'remove':
         if len(args) < 2:
             await safe_reply(update, "⚠️ Example: <code>/budget remove 500</code>")
             return
         try:
-            amt = Decimal(args[1])
+            amt = Decimal(args[1].replace('₹', '').replace(',', ''))
             budget = await modify_budget_db(user, action='remove', amount_val=amt)
             await safe_reply(update, f"✅ Deducted <b>₹{amt:,.2f}</b>.\nNew budget for this month: <code>₹{budget.amount:,.2f}</code>")
         except (InvalidOperation, ValueError):
             await safe_reply(update, "❌ Invalid amount.")
         return
 
-    # 5. /budget <amount> OR /budget <month> <amount>
-    try:
-        # Check if first arg is month name
-        parsed = parse_filter_args(first_arg)
-        if parsed['month'] and len(args) >= 2:
-            month_val = parsed['month']
-            amt = Decimal(args[1])
-            budget = await modify_budget_db(user, action='set', amount_val=amt, month=month_val)
-            await safe_reply(update, f"🎯 Budget for month <b>{month_val}</b> set to <code>₹{budget.amount:,.2f}</code>.")
+    # 6. /budget <month> [year] [amount]  OR  /budget <month> (view month's budget)
+    if first_arg in MONTH_NAMES:
+        month_val = MONTH_NAMES[first_arg]
+        month_name = calendar.month_name[month_val]
+        target_year = now.year
+        amount_to_set = None
+
+        for token in args[1:]:
+            t_clean = token.replace('₹', '').replace(',', '').strip()
+            if t_clean.isdigit() and len(t_clean) == 4 and target_year == now.year:
+                target_year = int(t_clean)
+            else:
+                try:
+                    amount_to_set = Decimal(t_clean)
+                except (InvalidOperation, ValueError):
+                    pass
+
+        # If an amount was provided, set the budget for that month
+        if amount_to_set is not None:
+            budget = await modify_budget_db(user, action='set', amount_val=amount_to_set, month=month_val, year=target_year)
+            await safe_reply(update, f"🎯 Budget for <b>{month_name} {target_year}</b> set to <code>₹{budget.amount:,.2f}</code>.")
             return
 
-        amt = Decimal(first_arg)
-        budget = await modify_budget_db(user, action='set', amount_val=amt)
-        await safe_reply(update, f"🎯 Budget for <b>{timezone.localdate().strftime('%B %Y')}</b> set to <code>₹{budget.amount:,.2f}</code>.")
-    except (InvalidOperation, ValueError):
-        await safe_reply(
-            update,
-            "⚠️ <b>Invalid budget command.</b>\n\n"
-            "<b>Examples:</b>\n"
-            "• <code>/budget 5000</code> (set monthly budget)\n"
-            "• <code>/budget september 6000</code>\n"
-            "• <code>/budget add 1000</code> (increase budget)\n"
-            "• <code>/budget remove 500</code> (decrease budget)\n"
-            "• <code>/budget remaining</code> (view balance)"
+        # Otherwise, VIEW the budget for that specific month!
+        status = await get_budget_status_db(user, month=month_val, year=target_year)
+        if not status['has_budget']:
+            spent_str = f"• <b>Total Spent:</b> <code>₹{status['total_spent']:,.2f}</code>\n\n" if status['total_spent'] > 0 else ""
+            await safe_reply(
+                update,
+                f"ℹ️ No budget set for <b>{month_name} {target_year}</b>.\n"
+                f"{spent_str}"
+                f"To set a budget limit, send: <code>/budget {first_arg} 5000</code>"
+            )
+            return
+
+        status_icon = "🚨" if status['is_over'] else ("⚠️" if status['percent_spent'] >= 80 else "✅")
+        msg = (
+            f"{status_icon} <b>Monthly Budget Status ({month_name} {target_year})</b>\n\n"
+            f"• <b>Budget Limit:</b> <code>₹{status['budget_amount']:,.2f}</code>\n"
+            f"• <b>Total Spent:</b> <code>₹{status['total_spent']:,.2f}</code> ({status['percent_spent']}%)\n"
+            f"• <b>Remaining:</b> <code>₹{status['remaining']:,.2f}</code>\n"
         )
+        if status['is_over']:
+            msg += f"\n🚨 <b>Over Budget by <code>₹{abs(status['remaining']):,.2f}</code>!</b>"
+        await safe_reply(update, msg)
+        return
+
+    # 7. /budget <amount> (set current month's budget)
+    try:
+        amt = Decimal(first_arg.replace('₹', '').replace(',', ''))
+        budget = await modify_budget_db(user, action='set', amount_val=amt, month=now.month, year=now.year)
+        await safe_reply(update, f"🎯 Budget for <b>{now.strftime('%B %Y')}</b> set to <code>₹{budget.amount:,.2f}</code>.")
+        return
+    except (InvalidOperation, ValueError):
+        pass
+
+    # Fallback: helpful usage syntax
+    await safe_reply(
+        update,
+        "⚠️ <b>Invalid budget command.</b>\n\n"
+        "<b>Viewing Budget:</b>\n"
+        "• <code>/budget</code> — View this month's budget status\n"
+        "• <code>/budget oct</code> — View specific month's status\n"
+        "• <code>/budget all</code> — All-time summary up to last transaction\n"
+        "• <code>/budget remaining</code> — Quick remaining balance\n\n"
+        "<b>Setting Budget:</b>\n"
+        "• <code>/budget 5000</code> — Set this month's budget\n"
+        "• <code>/budget oct 6000</code> — Set budget for a specific month\n"
+        "• <code>/budget add 1000</code> — Increase current budget\n"
+        "• <code>/budget remove 500</code> — Decrease current budget"
+    )
 
 
 # --------------------------------------------------------------------------

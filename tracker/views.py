@@ -114,7 +114,7 @@ def expenses_list_view(request):
 
     filter_label = "All Expenses"
     if query:
-        filter_dict = parse_filter_args(query, user=user)
+        filter_dict = parse_filter_args(query, user=user, default_to_current_month=False)
         qs = apply_expense_filters(qs, filter_dict)
         filter_label = filter_dict.get('label', query)
 
@@ -255,7 +255,7 @@ def export_pdf_view(request):
     filter_label = "All Expenses"
 
     if query:
-        filter_dict = parse_filter_args(query, user=user)
+        filter_dict = parse_filter_args(query, user=user, default_to_current_month=False)
         qs = apply_expense_filters(qs, filter_dict)
         filter_label = filter_dict.get('label', query)
 

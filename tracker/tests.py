@@ -5,7 +5,7 @@ from django.contrib.auth.models import User
 from django.db import IntegrityError
 from tracker.models import Category, Expense, Budget, TelegramLink, TelegramSession
 from tracker.services.filter_parser import parse_filter_args, apply_expense_filters
-from tracker.services.budget_service import get_budget_status, check_budget_thresholds_after_expense
+from tracker.services.budget_service import get_budget_status, get_all_time_budget_status, check_budget_thresholds_after_expense
 from tracker.services.pdf_generator import generate_expense_pdf
 
 
@@ -32,6 +32,9 @@ class ExpenseTrackerTests(TestCase):
         self.assertEqual(link.link_code, code)
 
     def test_filter_parser(self):
+        from django.utils import timezone
+        now = timezone.localdate()
+
         # 1. Month filter
         res1 = parse_filter_args('september', user=self.user)
         self.assertEqual(res1['month'], 9)
@@ -50,6 +53,52 @@ class ExpenseTrackerTests(TestCase):
         res4 = parse_filter_args('26 september 2026 food', user=self.user)
         self.assertEqual(res4['date'], date(2026, 9, 26))
         self.assertEqual(res4['category_name'], 'Food')
+
+        # 5. Default to current month when no date/month is given
+        res_default = parse_filter_args('', user=self.user)
+        self.assertEqual(res_default['month'], now.month)
+        self.assertEqual(res_default['year'], now.year)
+
+        # 6. /show food defaults to current month
+        res_food = parse_filter_args('food', user=self.user)
+        self.assertEqual(res_food['month'], now.month)
+        self.assertEqual(res_food['category_name'], 'Food')
+
+        # 7. /show food oct specifies month
+        res_food_oct = parse_filter_args('food oct', user=self.user)
+        self.assertEqual(res_food_oct['month'], 10)
+        self.assertEqual(res_food_oct['category_name'], 'Food')
+
+        # 8. /show food all is all-time
+        res_food_all = parse_filter_args('food all', user=self.user)
+        self.assertTrue(res_food_all['is_all_time'])
+        self.assertIsNone(res_food_all['month'])
+        self.assertEqual(res_food_all['category_name'], 'Food')
+
+        # 9. /show all is all-time
+        res_all = parse_filter_args('all', user=self.user)
+        self.assertTrue(res_all['is_all_time'])
+        self.assertIsNone(res_all['month'])
+
+        # 10. Web search explicitly opting out of current month default
+        res_web = parse_filter_args('food', user=self.user, default_to_current_month=False)
+        self.assertIsNone(res_web['month'])
+        self.assertEqual(res_web['category_name'], 'Food')
+
+    def test_all_time_budget_status(self):
+        food_cat = Category.objects.filter(user=self.user, name='Food').first()
+        Expense.objects.create(user=self.user, category=food_cat, type='Item 1', amount=Decimal('200.00'), date=date(2026, 9, 1))
+        Expense.objects.create(user=self.user, category=food_cat, type='Item 2', amount=Decimal('300.00'), date=date(2026, 10, 1))
+        Budget.objects.create(user=self.user, month=9, year=2026, amount=Decimal('500.00'))
+        Budget.objects.create(user=self.user, month=10, year=2026, amount=Decimal('1000.00'))
+
+        status = get_all_time_budget_status(self.user)
+        self.assertEqual(status['total_spent'], Decimal('500.00'))
+        self.assertEqual(status['total_count'], 2)
+        self.assertEqual(status['total_budget'], Decimal('1500.00'))
+        self.assertEqual(status['remaining'], Decimal('1000.00'))
+        self.assertEqual(status['first_date'], date(2026, 9, 1))
+        self.assertEqual(status['last_date'], date(2026, 10, 1))
 
     def test_budget_threshold_alerts(self):
         # Set a budget of 1000 for September 2026

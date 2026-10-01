@@ -1,6 +1,6 @@
 from decimal import Decimal
 from django.utils import timezone
-from django.db.models import Sum
+from django.db.models import Sum, Count
 from tracker.models import Budget, Expense
 
 
@@ -54,6 +54,42 @@ def get_budget_status(user, month=None, year=None):
         'is_over': is_over,
         'month': month,
         'year': year
+    }
+
+
+def get_all_time_budget_status(user):
+    """
+    Returns all-time spending and budget analytics for the user up to the latest transaction.
+    """
+    all_expenses = Expense.objects.filter(user=user)
+    agg = all_expenses.aggregate(total=Sum('amount'), count=Count('id'))
+    total_spent = agg['total'] or Decimal('0.00')
+    total_count = agg['count'] or 0
+
+    earliest_exp = all_expenses.order_by('date', 'created_at').first()
+    latest_exp = all_expenses.order_by('-date', '-created_at').first()
+
+    first_date = earliest_exp.date if earliest_exp else None
+    last_date = latest_exp.date if latest_exp else None
+
+    # Sum of all monthly budgets configured by user
+    total_budget_agg = Budget.objects.filter(user=user, amount__gt=0).aggregate(total=Sum('amount'))
+    total_budget = total_budget_agg['total'] or Decimal('0.00')
+
+    remaining = total_budget - total_spent
+    percent = float((total_spent / total_budget) * 100) if total_budget > 0 else 0.0
+    is_over = (total_spent > total_budget) if total_budget > 0 else False
+
+    return {
+        'total_spent': total_spent,
+        'total_count': total_count,
+        'first_date': first_date,
+        'last_date': last_date,
+        'total_budget': total_budget,
+        'has_budget': total_budget > 0,
+        'remaining': remaining,
+        'percent_spent': round(percent, 1),
+        'is_over': is_over
     }
 
 
