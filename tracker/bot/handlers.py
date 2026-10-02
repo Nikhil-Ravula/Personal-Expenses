@@ -449,6 +449,7 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• <code>/budget</code> — View this month's budget status\n"
         "• <code>/budget oct</code> — View budget for a specific month\n"
         "• <code>/budget all</code> — All-time budget & spending up to last transaction\n"
+        "• <code>/previous remaining budget</code> — Add leftover budget from last month\n"
         "• <code>/budget 5000</code> — Set this month's budget\n"
         "• <code>/budget oct 6000</code> — Set budget for a specific month\n"
         "• <code>/budget add 1000</code> — Increase current budget\n"
@@ -1036,6 +1037,11 @@ async def budget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     first_arg = args[0].lower()
 
+    # Route /budget previous or /budget rollover to rollover handler
+    if first_arg in ('previous', 'rollover', 'carryover'):
+        context.args = args[1:] if len(args) > 1 else []
+        return await previous_remaining_budget_handler(update, context)
+
     # 2. /budget all (up to the last transaction)
     if first_arg in ('all', 'all-time', 'alltime', 'overall'):
         status = await get_all_time_budget_status_db(user)
@@ -1193,6 +1199,110 @@ async def budget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def previous_remaining_budget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    user = await get_user_by_chat_id(chat_id)
+    if not user:
+        await safe_reply(update, "⚠️ Please link your account first using <code>/link YOUR_CODE</code>.")
+        return
+
+    now = timezone.localdate()
+
+    # Determine default previous month
+    if now.month == 1:
+        default_prev_month = 12
+        default_prev_year = now.year - 1
+    else:
+        default_prev_month = now.month - 1
+        default_prev_year = now.year
+
+    prev_month = default_prev_month
+    prev_year = default_prev_year
+
+    # Check if a custom month or year was specified in args (e.g. /previous aug)
+    if context.args:
+        for arg in context.args:
+            arg_clean = arg.lower().strip()
+            if arg_clean in MONTH_NAMES:
+                target_m = MONTH_NAMES[arg_clean]
+                prev_month = target_m
+                if target_m >= now.month:
+                    prev_year = now.year - 1
+                else:
+                    prev_year = now.year
+            elif arg_clean.isdigit() and len(arg_clean) == 4:
+                prev_year = int(arg_clean)
+
+    prev_month_name = calendar.month_name[prev_month]
+    curr_month_name = calendar.month_name[now.month]
+
+    prev_status = await get_budget_status_db(user, month=prev_month, year=prev_year)
+
+    if not prev_status['has_budget']:
+        spent_info = f"• <b>Total Spent in {prev_month_name}:</b> <code>₹{prev_status['total_spent']:,.2f}</code>\n\n" if prev_status['total_spent'] > 0 else ""
+        await safe_reply(
+            update,
+            f"ℹ️ <b>No budget limit was set for {prev_month_name} {prev_year}.</b>\n\n"
+            f"{spent_info}"
+            f"💡 To set a budget limit for {prev_month_name}, send:\n"
+            f"<code>/budget {prev_month_name.lower()} 5000</code>"
+        )
+        return
+
+    remaining_amt = prev_status['remaining']
+    if remaining_amt <= Decimal('0.00'):
+        await safe_reply(
+            update,
+            f"ℹ️ <b>No remaining budget from {prev_month_name} {prev_year} to roll over.</b>\n\n"
+            f"• <b>{prev_month_name} Budget Limit:</b> <code>₹{prev_status['budget_amount']:,.2f}</code>\n"
+            f"• <b>Total Spent:</b> <code>₹{prev_status['total_spent']:,.2f}</code>\n"
+            f"• <b>Remaining Balance:</b> <code>₹{remaining_amt:,.2f}</code>\n\n"
+            f"💡 There are no leftover funds to add to {curr_month_name} {now.year}."
+        )
+        return
+
+    # Current month's budget details
+    curr_status = await get_budget_status_db(user, month=now.month, year=now.year)
+    curr_budget = curr_status['budget_amount']
+    new_potential_budget = curr_budget + remaining_amt
+
+    # Save pending confirmation in session
+    await set_pending_action(
+        chat_id,
+        action='rollover_confirm',
+        data={
+            'amount': str(remaining_amt),
+            'prev_month': prev_month,
+            'prev_year': prev_year,
+            'prev_month_name': prev_month_name,
+            'curr_month': now.month,
+            'curr_year': now.year,
+            'curr_month_name': curr_month_name
+        }
+    )
+
+    keyboard = [
+        [
+            InlineKeyboardButton("✅ Yes, Add to this month", callback_data="rollover_yes"),
+            InlineKeyboardButton("❌ No", callback_data="rollover_no")
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    msg = (
+        f"💰 <b>Previous Month Remaining Budget</b>\n\n"
+        f"📅 <b>{prev_month_name} {prev_year}:</b>\n"
+        f"• <b>Budget Limit:</b> <code>₹{prev_status['budget_amount']:,.2f}</code>\n"
+        f"• <b>Total Spent:</b> <code>₹{prev_status['total_spent']:,.2f}</code>\n"
+        f"• <b>Remaining Budget:</b> <code>₹{remaining_amt:,.2f}</code>\n\n"
+        f"🎯 <b>Current Month ({curr_month_name} {now.year}):</b>\n"
+        f"• <b>Current Limit:</b> <code>₹{curr_budget:,.2f}</code>\n"
+        f"• <b>New Limit if Added:</b> <code>₹{new_potential_budget:,.2f}</code>\n\n"
+        f"❓ <b>Add remaining <code>₹{remaining_amt:,.2f}</code> to {curr_month_name}'s budget?</b>"
+    )
+    await safe_reply(update, msg, reply_markup=reply_markup)
+
+
 # --------------------------------------------------------------------------
 # Message & Callback Query Handlers (Session & Confirmation State)
 # --------------------------------------------------------------------------
@@ -1250,6 +1360,36 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             except (InvalidOperation, ValueError):
                 pass
         await safe_reply(update, "⚠️ Reply with description and amount (e.g. <code>Dinner 150</code>) or send <code>/cancel</code>.")
+        return
+
+    if pending_action == 'rollover_confirm':
+        if text.lower() in ['yes', 'y', 'confirm']:
+            if not pending_data or 'amount' not in pending_data:
+                await clear_pending_action(chat_id)
+                await safe_reply(update, "⚠️ This request has expired. Send <code>/previous remaining budget</code> again.")
+                return
+
+            amount = Decimal(pending_data['amount'])
+            now = timezone.localdate()
+            curr_month = pending_data.get('curr_month', now.month)
+            curr_year = pending_data.get('curr_year', now.year)
+            curr_month_name = pending_data.get('curr_month_name', calendar.month_name[curr_month])
+            prev_month_name = pending_data.get('prev_month_name', 'Previous month')
+
+            updated_budget = await modify_budget_db(user, action='add', amount_val=amount, month=curr_month, year=curr_year)
+            await clear_pending_action(chat_id)
+            await safe_reply(
+                update,
+                f"✅ <b>Successfully added ₹{amount:,.2f} to this month!</b>\n\n"
+                f"• <b>Carried over from:</b> {prev_month_name}\n"
+                f"• <b>New Budget Limit for {curr_month_name} {curr_year}:</b> <code>₹{updated_budget.amount:,.2f}</code>"
+            )
+        elif text.lower() in ['no', 'n', 'cancel']:
+            await clear_pending_action(chat_id)
+            await safe_reply(update, "❌ Budget rollover cancelled. Current month budget remains unchanged.")
+        else:
+            await safe_reply(update, "Please tap <b>Yes</b> or <b>No</b> above, or reply with <code>yes</code> or <code>no</code>.")
+        return
 
 
 async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1304,3 +1444,28 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
     elif data == "del_no":
         await clear_pending_action(chat_id)
         await safe_edit_text(query, "❌ Deletion cancelled.")
+
+    elif data == "rollover_yes":
+        _, pending_action, pending_data = await get_session_data(chat_id)
+        if pending_action != 'rollover_confirm' or not pending_data or 'amount' not in pending_data:
+            await safe_edit_text(query, "⚠️ This request has expired. Send <code>/previous remaining budget</code> again.")
+            return
+
+        amount = Decimal(pending_data['amount'])
+        now = timezone.localdate()
+        curr_month = pending_data.get('curr_month', now.month)
+        curr_year = pending_data.get('curr_year', now.year)
+        curr_month_name = pending_data.get('curr_month_name', calendar.month_name[curr_month])
+        prev_month_name = pending_data.get('prev_month_name', 'Previous month')
+
+        updated_budget = await modify_budget_db(user, action='add', amount_val=amount, month=curr_month, year=curr_year)
+        await clear_pending_action(chat_id)
+        await safe_edit_text(
+            query,
+            f"✅ <b>Successfully added ₹{amount:,.2f} to this month!</b>\n\n"
+            f"• <b>Carried over from:</b> {prev_month_name}\n"
+            f"• <b>New Budget Limit for {curr_month_name} {curr_year}:</b> <code>₹{updated_budget.amount:,.2f}</code>"
+        )
+    elif data == "rollover_no":
+        await clear_pending_action(chat_id)
+        await safe_edit_text(query, "❌ Budget rollover cancelled. Current month budget remains unchanged.")

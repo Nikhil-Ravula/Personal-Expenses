@@ -76,6 +76,7 @@ def build_bot_application(token: str, loop=None, proxy_override=None):
         total_handler,
         pdf_handler,
         budget_handler,
+        previous_remaining_budget_handler,
         text_message_handler,
         callback_query_handler
     )
@@ -124,6 +125,9 @@ def build_bot_application(token: str, loop=None, proxy_override=None):
     application.add_handler(CommandHandler("total", total_handler))
     application.add_handler(CommandHandler("pdf", pdf_handler))
     application.add_handler(CommandHandler("budget", budget_handler))
+    application.add_handler(CommandHandler("previous", previous_remaining_budget_handler))
+    application.add_handler(CommandHandler("previous_remaining_budget", previous_remaining_budget_handler))
+    application.add_handler(CommandHandler("rollover", previous_remaining_budget_handler))
 
     # Callback queries for inline confirm/cancel
     application.add_handler(CallbackQueryHandler(callback_query_handler))

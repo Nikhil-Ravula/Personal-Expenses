@@ -100,6 +100,27 @@ class ExpenseTrackerTests(TestCase):
         self.assertEqual(status['first_date'], date(2026, 9, 1))
         self.assertEqual(status['last_date'], date(2026, 10, 1))
 
+    def test_previous_remaining_budget_rollover(self):
+        # Create budget for September 2026: 5000
+        Budget.objects.create(user=self.user, month=9, year=2026, amount=Decimal('5000.00'))
+        food_cat = Category.objects.filter(user=self.user, name='Food').first()
+        Expense.objects.create(user=self.user, category=food_cat, type='Sep Dinners', amount=Decimal('2000.00'), date=date(2026, 9, 10))
+
+        # Check status for September 2026
+        sep_status = get_budget_status(self.user, month=9, year=2026)
+        self.assertTrue(sep_status['has_budget'])
+        self.assertEqual(sep_status['remaining'], Decimal('3000.00'))
+
+        # Create budget for October 2026: 4000
+        oct_budget, _ = Budget.objects.get_or_create(user=self.user, month=10, year=2026, defaults={'amount': Decimal('4000.00')})
+
+        # Add remaining budget (3000) from September to October
+        oct_budget.amount += sep_status['remaining']
+        oct_budget.save()
+
+        oct_status = get_budget_status(self.user, month=10, year=2026)
+        self.assertEqual(oct_status['budget_amount'], Decimal('7000.00'))
+
     def test_budget_threshold_alerts(self):
         # Set a budget of 1000 for September 2026
         budget = Budget.objects.create(

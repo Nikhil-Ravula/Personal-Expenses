@@ -22,6 +22,7 @@ from tracker.bot.handlers import (
     total_handler,
     pdf_handler,
     budget_handler,
+    previous_remaining_budget_handler,
     text_message_handler,
     callback_query_handler
 )
